@@ -1,0 +1,9 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BorlandProject>
+  <Transactions>
+    <Transaction>2015/03/07 11:36:38.941,=C:\Users\amarildo_2\Documents\Embarcadero\Studio\Projects\Unit3.pas</Transaction>
+    <Transaction>2015/03/07 11:38:19.823,C:\fontes\git\FiredacTables\samples\simple\wBdeFiredac.pas=C:\Users\amarildo_2\Documents\Embarcadero\Studio\Projects\Unit3.pas</Transaction>
+    <Transaction>2015/03/07 11:38:19.823,C:\fontes\git\FiredacTables\samples\simple\wBdeFiredac.dfm=C:\Users\amarildo_2\Documents\Embarcadero\Studio\Projects\Unit3.dfm</Transaction>
+    <Transaction>2015/03/07 11:38:44.344,C:\fontes\git\FiredacTables\samples\simple\queryBFiredac.dproj=C:\Users\amarildo_2\Documents\Embarcadero\Studio\Projects\Project2.dproj</Transaction>
+  </Transactions>
+</BorlandProject>
