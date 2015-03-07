@@ -1,0 +1,2 @@
+# FiredacTables
+Delphi TQuery Compatibility
