@@ -1,8 +1,7 @@
 # FiredacTables
 
-Welcome to the FiredacTables wiki!
 
-You code BDE style and access Firedac library.
+Code BDE style and access Firedac library.
 
 First of all, need create some thing to change  BDE Config way - 
 There are two possibilities:
