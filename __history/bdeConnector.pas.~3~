@@ -1,0 +1,22 @@
+unit bdeConnector;
+
+interface
+
+uses Classes, SysUtils, {$ifdef FIREDAC} fireTables {$else} dbTables {$endif};
+
+
+type
+   TQuery = {$ifdef FIREDAC} TFireQuery {$else} dbTables.TQuery {$endif};
+   TTable = {$ifdef FIREDAC} TFireTable {$else} dbTables.TTable {$endif};
+   TStoredProc = {$ifdef FIREDAC} TFireStoredProc {$else} dbTables.TStoredProc {$endif};
+   TSession = {$ifdef FIREDAC} TFireSession {$else} dbTables.TSession {$endif};
+   TSessions = {$ifdef FIREDAC} TFireSessions {$else} dbTables.TSessions {$endif};
+   TDatabase = {$ifdef FIREDAC} TFireDatabase {$else} dbTables.TDatabase {$endif};
+
+   Session = {$ifdef FIREDAC} FireSession {$else} dbTables.Session {$endif};
+   Sessions = {$ifdef FIREDAC} FireSessions {$else} dbTables.Sessions {$endif};
+
+
+implementation
+
+end.
