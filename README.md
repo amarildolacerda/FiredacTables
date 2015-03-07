@@ -51,3 +51,8 @@ Reference Table
 
 
 
+To replace BDE completely, its possibile register packages BDERTL  (Tested with XE7 without BDE Package);
+
+With BDE packages instaled, use compiler directive   "FIREDAC, BDE2FIREDAC"  and alter uses do include  "dbBdeConector";
+
+
