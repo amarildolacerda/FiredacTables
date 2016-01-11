@@ -8,7 +8,7 @@ interface
 {$DEFINE BDE2FIREDAC}
 {$DEFINE FIREDAC}
 {$ENDIF}
-{$DEFINE USACUSTOMDLG}
+{.$DEFINE USACUSTOMDLG}
 {$IFDEF WINDBU }
 {$DEFINE LOCALSQL}
 {$ENDIF }
@@ -16,16 +16,17 @@ interface
 {$DEFINE LOG}
 {$IFNDEF MSWINDOWS}
 {$UNDEF USACUSTOMDLG}
-{$UNDEF LOG}
+{$UNDEF LOG}              
 {$ENDIF}
 {$IFDEF CPUX64}
 {$DEFINE BDE2FIREDAC}
 {$ENDIF}
+
 {$IFDEF BPL}
-{$UNDEF USACUSTOMDLG}
-{$UNDEF LOG}
-{$UNDEF VCL}
-{$UNDEF FMX}
+ {$UNDEF USACUSTOMDLG}
+ {$UNDEF LOG}
+ {$UNDEF VCL}
+ {$UNDEF FMX}
 {$ENDIF}
 
 uses
@@ -484,8 +485,8 @@ uses
 
 {$IFDEF MSWINDOWS}
 {$IFNDEF BPL}
-  IniFilesEx,  // TODO -oAL : reavaliar - n„o deveria ter referencia para codigo interno
-  uDebug,      // TODO -oAL : refatorar, para n„o ter dependencia da uDebug
+  IniFilesEx,  // TODO -oAL : reavaliar - n√£o deveria ter referencia para codigo interno
+  uDebug,      // TODO -oAL : refatorar, para n√£o ter dependencia da uDebug
   FireDacLoginDialogBase,
 {$ENDIF}
   FireDAC.Stan.Util,
@@ -736,7 +737,7 @@ begin
   end;
 {$ENDIF}
   if Params.Values['DriverID'] = '' then
-    raise exception.Create('Falta definir o protocolo em ' + LArqConfigINI + ' para a conex„o: ' + Databasename + ' Alias: ' + AliasName);
+    raise exception.Create('Falta definir o protocolo em ' + LArqConfigINI + ' para a conex√£o: ' + Databasename + ' Alias: ' + AliasName);
   inherited;
 end;
 
@@ -810,8 +811,8 @@ begin
       Free;
     end;
 
-  { Quando a funÁ„o acima n„o retornar o nome do computador, e executada nova
-    funÁ„o para ler o nome do computador - Acessibilidade do Usu·rio do Windows
+  { Quando a fun√ß√£o acima n√£o retornar o nome do computador, e executada nova
+    fun√ß√£o para ler o nome do computador - Acessibilidade do Usu√°rio do Windows
     ou Windows Service }
   if Trim(result) = '' then
   begin
@@ -961,7 +962,7 @@ begin
 
     ini.ReadSectionValues(DB.AliasName, str);
     if (str.count = 0) then
-      raise exception.Create('N„o leu informaÁıes de configuraÁ„o: ' + LArqConfigINI + ' Alias: ' + DB.AliasName);
+      raise exception.Create('N√£o leu informa√ß√µes de configura√ß√£o: ' + LArqConfigINI + ' Alias: ' + DB.AliasName);
 
     if not ini.ValueExists(DB.AliasName, 'AutoClose') then
     begin
@@ -992,12 +993,12 @@ begin
     DB.FetchOptions.AutoClose := AAutoClose;
     if ARowsetsize <= 0 then
     begin
-      DB.FetchOptions.Mode := fmAll; // carrega todos os registros da tabela - indicado para ambientes inst·veis
+      DB.FetchOptions.Mode := fmAll; // carrega todos os registros da tabela - indicado para ambientes inst√°veis
     end
     else
     begin
       DB.FetchOptions.RowsetSize := ARowsetsize;
-      DB.FetchOptions.Mode := fmOnDemand; // carrega somente o numero de registro necess·rio.  Indicado para tabelas grandes
+      DB.FetchOptions.Mode := fmOnDemand; // carrega somente o numero de registro necess√°rio.  Indicado para tabelas grandes
     end;
 
     FireFillParams(Protocol2DriverID(Prot), DB.Params);
@@ -1028,7 +1029,7 @@ begin
 
   DB := Session.FindDataBase(Value);
   if assigned(DB) then
-    raise exception.Create('J· existe um database com o mesmo identificador <' + Value + '>');
+    raise exception.Create('J√° existe um database com o mesmo identificador <' + Value + '>');
   ConnectionName := Value;
 
 end;
@@ -1368,8 +1369,8 @@ begin
   Action := raAbort;
   if assigned(FOnReconcileError) then
     FOnReconcileError(DataSet, E, UpdateKind, Action);
-  // no alquery, o undo È executado se estiver em ManualUpdate = false
-  // se estiver com ManualUpdate = true, n„o È feito automatico.
+  // no alquery, o undo √© executado se estiver em ManualUpdate = false
+  // se estiver com ManualUpdate = true, n√£o √© feito automatico.
   // UndoLastChange(True);  // movido para o TAlQuery
 
 end;
@@ -1402,8 +1403,8 @@ begin
   end;
 {$ENDIF}
 
-{  AL - comentado porque n„o È igual em todos os pontos. - Relatorio do encmenda n„o funcionou.  F3/F5 - enc por data. (.DB)
-        Talves seja necess·rio tratar o ponto onde È contruido o codigo que chama.
+{  AL - comentado porque n√£o √© igual em todos os pontos. - Relatorio do encmenda n√£o funcionou.  F3/F5 - enc por data. (.DB)
+        Talves seja necess√°rio tratar o ponto onde √© contruido o codigo que chama.
 
   if sametext(FDatabasename, c_alias_Local_SQLite) and (UpdateOptions.KeyFields = '') then
     UpdateOptions.KeyFields := 'ROWID';
@@ -1540,7 +1541,7 @@ begin
   repeat
     i := pos('{', s);
     if i > 0 then
-    begin // È um filtro
+    begin // √© um filtro
       r := copy(s, i, length(s));
       f := pos('}', r);
       if f > 0 then
@@ -2294,7 +2295,7 @@ begin
 
   conn := FireSession.FindDataBase(Databasename);
 
-  tableName := stringReplace(sTableName,'"','',[rfReplaceAll]); // retira as aspas para fazer a comparaÁ„o se a tabela ja existe.
+  tableName := stringReplace(sTableName,'"','',[rfReplaceAll]); // retira as aspas para fazer a compara√ß√£o se a tabela ja existe.
   try
   if inherited exists then
     conn.ExecSQL('Drop table ' + sTableName);
@@ -2500,11 +2501,11 @@ begin
     if not assigned(result) then
       if FireSessions.FAliases.IndexOf(alias) >= 0 then
       begin
-        // È um alias que n„o foi iniado como Databasename
+        // √© um alias que n√£o foi iniado como Databasename
         result := TFireDatabase.Create(FireSession);
         result.AliasName := alias;
         result.ConnectionName := alias; // trick para quebrar loop;
-        // InitDataBaseParams(result);  -- a chamada È feita ao atribuir o aliasname
+        // InitDataBaseParams(result);  -- a chamada √© feita ao atribuir o aliasname
         // result.LoginDialog := LFireDacDataModule.FDGUIxLoginDialog1;
         result.LoginPrompt := true;
       end;
@@ -2589,13 +2590,15 @@ begin
     if dlg.ModalResult = mrOk then
     begin
       AResult := true;
+(*
 {$IFDEF VER280}
       FDGUIxLoginDialog1.ConnectionDef.Params.UserName := dlg.User_Name.Text;
       FDGUIxLoginDialog1.ConnectionDef.Params.Password := dlg.Password.Text;
 {$ELSE}
-      FDGUIxLoginDialog1.ConnectionDef.UserName := dlg.User_Name.Text;
+      FDGUIxLoginDialog1.  ConnectionDef.UserName := dlg.User_Name.Text;
       FDGUIxLoginDialog1.ConnectionDef.Password := dlg.Password.Text;
 {$ENDIF}
+*)
     end;
   finally
     dlg.Free;
