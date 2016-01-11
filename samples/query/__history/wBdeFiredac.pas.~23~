@@ -45,24 +45,17 @@ end;
 procedure TForm1.FormCreate(Sender: TObject);
 begin
    DatabaseCreate;
-   QueryCreate;
 end;
 
 procedure TForm1.QueryCreate;
 begin
-
-
-
    FQuery := TQuery.Create(self);
    FQuery.Databasename := FDatabase.Databasename;
-   FQuery.SQL.Text := 'select * from rdb$relations';
-
-
-   DataSource1.DataSet := FQuery;
-
+   FQuery.SQL.Text := 'select * from rdb$databases';
    FQuery.open;
 
 
+   DataSource1.DataSet := FQuery;
 
 end;
 

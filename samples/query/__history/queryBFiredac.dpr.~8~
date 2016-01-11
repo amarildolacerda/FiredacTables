@@ -1,9 +1,8 @@
-﻿program queryBFiredac;
+program queryBFiredac;
 
 uses
   Vcl.Forms,
-  wBdeFiredac in 'wBdeFiredac.pas' {Form3},
-  bdeConnector in '..\..\bdeConnector.pas';
+  wBdeFiredac in 'wBdeFiredac.pas' {Form3};
 
 {$R *.res}
 

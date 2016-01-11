@@ -45,7 +45,6 @@ end;
 procedure TForm1.FormCreate(Sender: TObject);
 begin
    DatabaseCreate;
-   QueryCreate;
 end;
 
 procedure TForm1.QueryCreate;

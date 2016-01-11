@@ -15,7 +15,7 @@ const
   dbfIndexList: Integer = 5;
   dbfOpened: Integer = 0;
   dbfPrepared: Integer = 1;
-  dbfProcDesc: Integer = 8;                              
+  dbfProcDesc: Integer = 8;
   dbfProvider: Integer = $A;
   dbfStoredProc: Integer = 6;
   dbfTable: Integer = 3;

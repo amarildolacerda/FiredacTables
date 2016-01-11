@@ -5,12 +5,10 @@ interface
 uses
   Winapi.Windows, Winapi.Messages, System.SysUtils, System.Variants, System.Classes, Vcl.Graphics,
   BDE.DBTables,
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Data.DB, Vcl.Grids, Vcl.DBGrids;
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs;
 
 type
   TForm1 = class(TForm)
-    DBGrid1: TDBGrid;
-    DataSource1: TDataSource;
     procedure FormCreate(Sender: TObject);
   private
     { Private declarations }
@@ -45,25 +43,14 @@ end;
 procedure TForm1.FormCreate(Sender: TObject);
 begin
    DatabaseCreate;
-   QueryCreate;
 end;
 
 procedure TForm1.QueryCreate;
 begin
-
-
-
    FQuery := TQuery.Create(self);
    FQuery.Databasename := FDatabase.Databasename;
-   FQuery.SQL.Text := 'select * from rdb$relations';
-
-
-   DataSource1.DataSet := FQuery;
-
+   FQuery.SQL.Text := 'select * from rdb$database';
    FQuery.open;
-
-
-
 end;
 
 end.
