@@ -1,8 +1,32 @@
+{ *************************************************************************** }
+{ }
+{ }
+{ Copyright (C) Amarildo Lacerda }
+{ }
+{ https://github.com/amarildolacerda }
+{ }
+{ }
+{ *************************************************************************** }
+{ }
+{ Licensed under the Apache License, Version 2.0 (the "License"); }
+{ you may not use this file except in compliance with the License. }
+{ You may obtain a copy of the License at }
+{ }
+{ http://www.apache.org/licenses/LICENSE-2.0 }
+{ }
+{ Unless required by applicable law or agreed to in writing, software }
+{ distributed under the License is distributed on an "AS IS" BASIS, }
+{ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. }
+{ See the License for the specific language governing permissions and }
+{ limitations under the License. }
+{ }
+{ *************************************************************************** }
+
 unit BDE.DBTables;
 
 interface
 
-uses Classes, sysUtils, DB, FireTables, BDE {,FireDAC.Stan.Error};
+uses Classes, sysUtils, DB, Data.FireTables, BDE {,FireDAC.Stan.Error};
 
 { .$ifdef VER280 }
 {.$IFDEF BDE2FIREDAC}
@@ -79,7 +103,7 @@ Type
     property TraceFlags: TTraceFlags read GetTraceFlags write SetTraceFlags;
     property HandleShared: Boolean read FHandleShared write FHandleShared
       default False;
-    property Params: TStrings read GetParams write SetParams ;
+    property Params: TStrings read GetParams write SetParams;
   published
     property Connected;
   END;
@@ -694,3 +718,4 @@ begin
 end;
 
 end.
+

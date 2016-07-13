@@ -31,7 +31,7 @@ package bdertl;
 {$DESIGNONLY}
 {$IMPLICITBUILD OFF}
 
-rrequires
+requires
   rtl,
   vcl,
   dbrtl,
@@ -47,8 +47,9 @@ rrequires
   FireDACMySQLDriver,
   DesignIDE;
 
-ocontains
-  fireTableReg in 'fireTableReg.pas',
+contains
+  DBTables in '..\DXE8\DBTables.pas',
+  fireTableReg in '..\DXE8\fireTableReg.pas',
   fireTables in '..\COMUM\fireTables.pas';
 
-d.
+end.

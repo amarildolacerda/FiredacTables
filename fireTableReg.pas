@@ -2,7 +2,7 @@ unit fireTableReg;
 
 interface
 
-uses Classes,FireTables, DbTables, DesignIntf;
+uses System.Classes, Data.FireTables, BDE.DbTables, DesignIntf;
 
 
 procedure Register;
