@@ -48,8 +48,6 @@ requires
   DesignIDE;
 
 contains
-  DBTables in '..\DXE8\DBTables.pas',
-  fireTableReg in '..\DXE8\fireTableReg.pas',
-  fireTables in '..\COMUM\fireTables.pas';
+  fireTableReg in 'fireTableReg.pas';
 
 end.
