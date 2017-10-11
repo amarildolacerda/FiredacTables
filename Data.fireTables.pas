@@ -44,13 +44,22 @@ unit Data.fireTables;
   Fazer testes de validade para uso WIN64;
 
   AL - 28/12/2015
-  Correção do UpdateSql parar propagar erros a query principal;
+  * Correção do UpdateSql parar propagar erros a query principal;
   refletindo em ErrorCount e ErrorMessages
+  AL - 21/10/2016
+  + incluido metodos novos para ex:  SetConnectionString
+  - retirado componentes de TRACE que estavam travando nas DLL de plugin
+  se precisar ainda destes componentes, incluir manualmente na aplicação
 }
 
 interface
 
-{$I Delphi.inc}
+{$DEFINE TRACE } // quando usa DLL nao pode ter trace no APP nem na DLL
+{ .$DEFINE NOTRACE }
+{$IF DEFINED(BPL) or DEFINED(DLL) or NOT DEFINED(MSWINDOWS) }
+{$DEFINE NOTRACE}
+{$IFEND}
+{$I firedac.inc}
 {$DEFINE USACUSTOMDLG}
 {$IFDEF WINDBU }
 {$DEFINE LOCALSQL}
@@ -85,6 +94,12 @@ interface
 {$IFDEF EXTERNAL}
 {$UNDEF INTF_ON}
 {$ENDIF}
+{$IFDEF NOTRACE}
+{$UNDEF INTF_ON}
+{$ENDIF}
+{$IFDEF UNIGUI}
+{$DEFINE NOGUI}
+{$ENDIF}
 
 uses
 {$IFDEF MSWINDOWS}
@@ -94,23 +109,29 @@ uses
   System.SyncObjs, System.Diagnostics,
   Data.DB, FireDAC.Stan.Param, FireDAC.Stan.Intf, FireDAC.Comp.Client,
   FireDAC.Comp.DataSet, FireDAC.Stan.Error, FireDAC.DatS, FireDAC.Stan.Option,
-  FireDAC.DApt.Intf,
-{$IFDEF INTF_ON}
+  FireDAC.DApt.Intf, System.Generics.Collections,
+{$IFNDEF BPL}
   Data.QueryIntf,
 {$ENDIF}
 {$IFDEF MSWINDOWS}
 {$ENDIF}
   FireDAC.Comp.ScriptCommands,
+{$IFDEF DELPHI25gt}
+  FireDAC.Comp.BatchMove,
+  FireDAC.Comp.BatchMove.DataSet,
+{$ELSE}
   FireDAC.Comp.DataMove,
+{$ENDIF}
   FireDAC.Comp.Script,
   System.SysUtils, System.Variants,
   System.Classes,
 {$IFDEF FMX}
   FMX.Graphics,
 {$ELSE}
-  Vcl.Graphics,
+  // Vcl.Graphics,
 {$ENDIF}
-  IniFiles, Data.fireTables.GuiXDialogs;
+  System.IniFiles
+{$IF CompilerVersion>= 31.0}{,Data.fireTables.GuiXDialogs}{$ENDIF};
 
 const // AL - nao pode mudar este codigo de lugar
   c_alias_Local_SQLite = 'LOCAL_SQLITE'; // nao alterar
@@ -126,6 +147,7 @@ type
     execute: boolean;
     prepare, unprepare: boolean;
     transaction: boolean;
+    Detalhed: boolean;
   end;
 
   TFireTransIsolation = (tiDirtyRead, tiReadCommitted, tiRepeatableRead);
@@ -145,23 +167,30 @@ type
 
   TFireSession = class;
 
+  TFireManager = class(TFDManager)
+  public
+    PoolDatabasename: string;
+    Connection: TFireDatabase;
+  end;
+
   TFireDatabase = class(TFDConnection)
   private
     FStopwatch: TStopwatch;
+    FSession: TFireSession;
+{$IFNDEF DLL}
     FLock: TMultiReadExclusiveWriteSynchronizer;
+{$ENDIF}
     FAliasName: string;
     FKeepConnection: boolean;
     FSessionName: String;
-    FSession: TFireSession;
     FTransIsolation: TFireTransIsolation;
-    FDriveType: string;
+    FDriverType: string;
     FmanualConfig: boolean;
     procedure SetDatabasename(const Value: string);
     function GetDatabasename: string;
     procedure SetAliasName(const Value: string);
     procedure SetKeepConnection(const Value: boolean);
     procedure SetSessionName(const Value: String);
-    procedure SetSession(const Value: TFireSession);
     procedure SetTransIsolation(const Value: TFireTransIsolation);
 {$IFDEF USACUSTOMDLG}
 {$IFDEF VER290}
@@ -176,22 +205,42 @@ type
     procedure DoBeforeConnectEvent(sender: TObject);
     procedure SetTimeout(const Value: integer);
     function GetTimeout: integer;
+    procedure SetPassword(const Value: string);
+    procedure SetUserName(const Value: string);
+    function GetPassword: string;
+    function GetUserName: string;
+    // procedure SetSession(const Value: TFireSession);
+    // function GetSession: TFireSession;
   protected
+    class var FPoolManager: TFireManager;
     procedure DoAfterConnectEvent(sender: TObject); virtual;
     procedure DoConnect; override;
     procedure init;
+    procedure CheckTrace;
+{$IFNDEF BPL}
+  public
+{$ENDIF}
+    procedure GetPrimaryKeyFields(ATableName: String; AListFields: TStrings);
+    procedure GetIndexes(ATableName: string; AListFields: TStrings);
   public
 
-{$IFDEF INTF_ON}
-    class function NewQuery(ADatabaseName:string): IQuery; overload;
+{$IFNDEF BPL}
+    class function NewQuery(ADatabaseName: string): IQuery; overload;
 {$ENDIF}
-    class function New(AAlias, ADatabase, AUser, ASenha: string): TFireDatabase;overload;
+    class function New(AAlias, ADatabase, AUser, ASenha: string)
+      : TFireDatabase; overload;
     Constructor Create(ow: TComponent); override;
     Destructor Destroy; override;
+    class procedure Release;
+    function GetFireConnectionString: string;
+    procedure SetFireConnectionString(const AConn: String);
     procedure CloseDataSets;
+    function CreatePoolManager: string;
     property KeepConnection: boolean read FKeepConnection
       write SetKeepConnection;
-    property Session: TFireSession read FSession write SetSession;
+
+    property Session: TFireSession read FSession;
+    // write FSession; //read GetSession write SetSession;
     procedure GetColumnNames(ATable: string; aTmp: string; ALst: TStrings);
     procedure GetFieldNames(tabela: string; lst: TStrings); overload;
     procedure GetTableNames(lst: TStrings; sysObjs: boolean); overload;
@@ -199,6 +248,14 @@ type
 
     property manualConfig: boolean read FmanualConfig write SetmanualConfig;
     property Timeout: integer read GetTimeout write SetTimeout;
+
+    property UserName: string read GetUserName write SetUserName;
+    property Password: string read GetPassword write SetPassword;
+    procedure BeginWrite;
+    procedure EndWrite;
+    procedure BeginRead;
+    procedure EndRead;
+    class procedure InitParams(ADB: TFDConnection; AAliasName: string);
   published
 
     Property AliasName: string read FAliasName write SetAliasName;
@@ -207,13 +264,15 @@ type
     property TransIsolation: TFireTransIsolation read FTransIsolation
       write SetTransIsolation;
     property LoginPrompt;
-    procedure FillParams(ADb: TFireDatabase);
-    function Clone(ADbaseName: string): TFireDatabase;
+    procedure FillParams(ADB: TFireDatabase);
+    function Clone(ADbaseName: string; AOwner: TComponent = nil): TFireDatabase;
   end;
+
+  TDatabaseObjectList = TList<TFireDatabase>;
 
   TFireUpdateSql = class;
 
-  TFireQuery = class({$IFDEF BPL}TFDCustomQuery{$ELSE}{$IFDEF INTF_ON}TFDQuery{$ENDIF}{$ENDIF})
+  TFireQuery = class({$IFNDEF BPL} TFDQuery {$ELSE}   {$IFDEF INTF_ON}TFDQuery{$ELSE} {$IFDEF NOTRACE} TFDQuery{$ELSE} TFDCustomQuery{$ENDIF} {$ENDIF}{$ENDIF})
   private
     FLock: TMultiReadExclusiveWriteSynchronizer;
     FSQL: TStrings;
@@ -238,7 +297,6 @@ type
     function GetUpdateObject: TFireUpdateSql;
     procedure SetUpdateObject(const Value: TFireUpdateSql);
     procedure SetAutoRefresh(const Value: boolean);
-    function GetDataSource: TDataSource; override;
     procedure SetDatasource(const Value: TDataSource);
     procedure InitNullParams;
     function GetSQL: TStrings;
@@ -259,6 +317,10 @@ type
     procedure SetCmdExecModeEx(const Value: TFDStanAsyncMode);
     procedure SetMacroCheck(const Value: boolean);
     procedure SetExecAsync(const Value: boolean);
+{$IFNDEF BPL}
+    function GetRowSetSize: integer;
+    procedure SetRowSetSize(const Value: integer);
+{$ENDIF}
   protected
     FInSqlChanging: boolean;
     FErrorMessage: string;
@@ -268,19 +330,20 @@ type
     procedure InternalClose; override;
     procedure InternalPost; override;
     procedure SetActive(AValue: boolean); override;
+    function GetDataSource: TDataSource; override;
 
   public
     useLocalSql: boolean;
-{$IFDEF INTF_ON}
+{$IFNDEF BPL}
     function Intf: IQuery;
     // function ConnectName(ADatabasename: string): IQuery; override;
-    class function New(ADatabasename: string): IQuery; overload; virtual;
+    class function New(ADatabaseName: string): IQuery; overload; virtual;
 {$ENDIF}
-    procedure Open(ARowSetSize: integer); overload;
+    procedure Open(ARowSetSize: integer); overload; virtual;
     procedure Open(AAsync: boolean;
       ARowSetSize: integer = firedac_rowSetSize); overload;
-    procedure FreeBookMark(book: TBookMark); override;
-    function GetBookMark: TBookMark; override;
+    procedure FreeBookmark(book: TBookMark); override;
+    function GetBookmark: TBookMark; override;
     procedure GotoBookmark(book: TBookMark); reintroduce; virtual;
     function GetAfterInsert: TDataSetNotifyEvent;
     procedure SetAfterInsert(Value: TDataSetNotifyEvent);
@@ -288,10 +351,16 @@ type
     function BookmarkValid(Bookmark: TBookMark): boolean; override;
     property FieldOptions;
   public
+{$IFNDEF BPL}
+    class function New(FConn: TFDConnection): IQuery; overload;
+{$ENDIF}
     property CmdExecMode: TFDStanAsyncMode read GetCmdExecModeEx
       write SetCmdExecModeEx;
     property CmdExecAsync: boolean read FExecAsync write SetExecAsync;
     procedure CmdNonBloking;
+{$IFNDEF BPL}
+    property RowSetSize: integer read GetRowSetSize write SetRowSetSize;
+{$ENDIF}
     constructor Create(owner: TComponent); override;
     destructor Destroy; override;
     property Database: TFireDatabase read GetDatabase write SetDatabase;
@@ -300,8 +369,11 @@ type
     procedure InternalOpen; override;
     Procedure ExecDirect;
     procedure execute(ATimes: integer = 0; AOffset: integer = 0); override;
+    procedure DebugBefore(const AIdent:string);
+    procedure DebugAfter;
     procedure ExecSql;
     procedure ExecAsyncSql(AExecDirect: boolean = false);
+    procedure ParamNullIF(sParam: string; Value: variant);
   published
     property active;
     Property AutoCalcFields;
@@ -358,6 +430,7 @@ type
   private
     // FLock: TObject;
     FDatabasename: String;
+  protected
     function GetDatabasename: string;
     procedure SetDatabasename(const Value: string);
     function GetDatabase: TFireDatabase;
@@ -381,7 +454,8 @@ type
     function GetSQL: TStrings;
     procedure SetSQL(const Value: TStrings);
   public
-    procedure ExecSql;
+    procedure ExecSql; overload; virtual;
+    procedure Clear;
   published
     property SQL: TStrings read GetSQL write SetSQL;
   end;
@@ -447,11 +521,13 @@ type
     function GetReadOnly: boolean;
     procedure SetReadOnly(const Value: boolean);
     procedure SetTableType(const Value: TFireTableType);
-    procedure SetActive(AValue: boolean); override;
     function GetTableName: string;
     procedure SetTableName(const Value: string);
     procedure SetUpdateMode(const Value: TUpdateMode);
     procedure SetDefaultIndex(const Value: boolean);
+  protected
+    procedure SetActive(AValue: boolean); override;
+
   public
     property Database: TFireDatabase read GetDatabase write SetDatabase;
     procedure CreateTable;
@@ -490,6 +566,7 @@ type
     constructor Create(ow: TComponent); override;
     destructor Destroy; override;
     function IsAlias(sAlias: String): boolean;
+    procedure DeleteDatabasename(ADB: string);
     procedure AddDriver(const Name: string; List: TStrings);
     function GetAliasDriverName(sAlias: String): String;
     procedure GetAliasParams(sAlias: String; str: TStrings);
@@ -498,6 +575,7 @@ type
     property netFileDir: String read FnetFileDir write SetnetFileDir;
     procedure ModifyAlias(alias: String; ts: TStrings);
     function FindDataBase(alias: String): TFireDatabase;
+    class function NewDatabase(const AConnectionString: string): TFireDatabase;
     property OnDbNotify: TFireDatabaseNotifyEvent read FOnDbNotify
       write SetOnDbNotify;
     function DatabaseCount: integer;
@@ -506,6 +584,8 @@ type
     property Databases[i: integer]: TFireDatabase read GetDatabases
       write SetDatabases;
     procedure CloseDatabases;
+    function LockList: TDatabaseObjectList;
+    procedure UnlockList;
     function OpenDatabase(dBase: string): TFireDatabase;
     procedure CloseDatabase(lDb: TFireDatabase);
     procedure DeleteAlias(sAlias: string);
@@ -583,8 +663,12 @@ type
 
   TFireBatchMode = (batAppend, batUpdate, batAppendUpdate, batDelete, batCopy);
 
-  TFireBatchMove = class(TFDDataMove)
+  TFireBatchMove = class({$IFDEF DELPHI25gt}TFDBatchMove{$ELSE} TFDDataMove{$ENDIF})
   private
+{$IFDEF DELPHI25gt}
+    FDBatchMoveDataSetReader1: TFDBatchMoveDataSetReader;
+    FDBatchMoveDataSetWriter1: TFDBatchMoveDataSetWriter;
+{$ENDIF}
     FMode: TFireBatchMode;
     FRecordCount: integer;
     FTableType: TFireTableType;
@@ -596,6 +680,7 @@ type
     procedure SetRecordCount(const Value: integer);
     procedure SetTableType(const Value: TFireTableType);
   public
+    constructor Create(AOwner: TComponent); override;
     property RecordCount: integer read FRecordCount write SetRecordCount;
     procedure execute;
     property TableType: TFireTableType read FTableType write SetTableType;
@@ -610,8 +695,11 @@ type
 function FireSession: TFireSession;
 function FireSessions: TFireSessions;
 procedure SetFireDacConfig(arq: string);
+procedure LoadConnectionsConfig;
 
 procedure ExchangeFieldType(qry: TFireQuery; fld: string; ftClass: TFieldClass);
+
+function FireTable_GetErrorMessage(E: EFDDBEngineException): string;
 
 var
   FireDebugAttrib: TDebugAttrib;
@@ -625,9 +713,6 @@ implementation
 uses
   FireDAC.Phys.Intf, System.Threading,
 
-{$IF DEFINED(MSWINDOWS) AND NOT DEFINED(DLL)}
-  FireDAC.Moni.Custom,
-{$ENDIF}
   FireDAC.Phys.SQLiteVDataSet,
 
 {$IFNDEF EXTERNAL}
@@ -638,17 +723,20 @@ uses
   System.IniFilesEx, // DONE -oAL : remover codigo de uso interno - reavaliar
   // DONE -oAL : reavaliar - não deveria ter referencia para codigo interno
   FireDacLoginDialogBase,
+{$IFNDEF NOTRACE}
+  FireDAC.Moni.Custom,
   FireDAC.Moni.Base, // TFDMoniOutputEvent,
+  FireDAC.Moni.RemoteClient,
+{$ENDIF}
 {$ENDIF}
   FireDAC.Stan.Util,
   FireDAC.Stan.ExprFuncs,
   Registry,
   FireDAC.Phys.ODBCBase, FireDAC.Phys.ODBC,
   FireDAC.Phys.Oracle, FireDAC.Phys.MySQL,
-  FireDAC.Moni.RemoteClient,
   FireDAC.UI.Intf, FireDAC.Stan.Def,
   FireDAC.Stan.Pool, FireDAC.Stan.Async, FireDAC.Phys,
-  FireDAC.DApt, FireDAC.Phys.IBBase,
+  FireDAC.DApt, // FireDAC.Phys.IBBase,
   FireDAC.Phys.FB, FireDAC.Phys.MSSQL,
 
 {$IF CompilerVersion>27} // >XE6
@@ -661,9 +749,12 @@ uses
   FireDAC.FMXUI.Wait, FireDAC.Comp.UI,
   FireDAC.FMXUI.Login, FireDAC.FMXUI.Error,
 {$ELSE}
-  Vcl.Controls, Vcl.Forms, Vcl.Dialogs,
+  Vcl.Controls, {Vcl.Forms,} {Vcl.Dialogs,}
   FireDAC.VCLUI.Wait, FireDAC.Comp.UI,
   FireDAC.VCLUI.Login, FireDAC.VCLUI.Error,
+{$ENDIF}
+{$IFDEF CONSOLE}
+  FireDAC.ConsoleUI.Wait,
 {$ENDIF}
 {$IF defined(ANDROID) or defined(IOS)}
   System.IOUtils,
@@ -679,12 +770,22 @@ type
 
   TFireDacDataModule = class(TComponent)
 {$IFDEF MSWINDOWS}
+{$IFDEF NOGUI}
+{$IFDEF CONSOLE}
     FDGUIxLoginDialog1: TFDGUIxLoginDialog;
     FDGUIxErrorDialog1: TFDGUIxErrorDialog;
+{$ENDIF}
+{$ELSE}
+    FDGUIxLoginDialog1: TFDGUIxLoginDialog;
+    FDGUIxErrorDialog1: TFDGUIxErrorDialog;
+{$ENDIF}
     FDPhysODBCDriverLink1: TFDPhysODBCDriverLink;
     FDPhysOracleDriverLink1: TFDPhysOracleDriverLink;
     FDPhysMySQLDriverLink1: TFDPhysMySQLDriverLink;
     FDPhysFBDriverLink1: TFDPhysFBDriverLink;
+{$IFNDEF NOTRACE}
+    FDMonRemoteLink1: TFDMoniRemoteClientLink;
+{$ENDIF}
     Script: TFDScript;
   private
 {$IFDEF VCL}
@@ -698,8 +799,10 @@ type
     FDPhysSQLiteDriverLink1: TFDPhysSQLiteDriverLink;
   public
     constructor Create(ow: TComponent);
+    destructor Destroy; override;
+{$IFDEF MSWINDOWS}
     function OraDriver: TFDPhysOracleDriverLink;
-    { Public declarations }
+{$ENDIF}
   end;
 
 Var
@@ -714,19 +817,19 @@ Var
 
 type
 
-  TDatabasesList = class(TObject)
+  TDatabasesList = class(TComponent)
   private
-    FItems: TList;
+    FItems: TDatabaseObjectList;
     FLock: TMultiReadExclusiveWriteSynchronizer;
     function GetItems(idx: integer): TFireDatabase;
   public
     function count: integer;
-    constructor Create;
-    function Lock: TList;
+    constructor Create(AOwner: TComponent);
+    function Lock: TDatabaseObjectList;
     procedure Release;
     procedure Remove(DB: TFireDatabase);
     destructor Destroy; override;
-    procedure add(ADb: TFireDatabase);
+    procedure add(ADB: TFireDatabase);
     procedure Delete(i: integer);
     property items[idx: integer]: TFireDatabase read GetItems;
     function FindDataBase(alias: String): TFireDatabase;
@@ -745,9 +848,37 @@ begin
   result := LSessions;
 end;
 
-function TFireDatabase.Clone(ADbaseName: string): TFireDatabase;
+procedure TFireDatabase.BeginRead;
 begin
-  result := TFireDatabase.Create(nil);
+{$IFNDEF DLL}
+  FLock.BeginRead;
+{$ENDIF}
+end;
+
+procedure TFireDatabase.BeginWrite;
+begin
+{$IFNDEF DLL}
+  FLock.BeginWrite;
+{$ENDIF}
+end;
+
+procedure TFireDatabase.CheckTrace;
+var
+  i: integer;
+begin
+{$IFNDEF NOTRACE}
+  i := Params.IndexOfName('MonitorBy');
+  if i >= 0 then
+    Params.Delete(i);
+{$IFEND}
+end;
+
+function TFireDatabase.Clone(ADbaseName: string; AOwner: TComponent = nil)
+  : TFireDatabase;
+begin
+  if AOwner = nil then
+    AOwner := LFireDacDataModule;
+  result := TFireDatabase.Create(AOwner);
   result.FillParams(self);
   result.Databasename := ADbaseName;
 end;
@@ -756,37 +887,45 @@ procedure TFireDatabase.CloseDataSets;
 var
   i: integer;
 begin
-  FLock.BeginWrite;
+  BeginWrite;
   try
     for i := DataSetCount - 1 downto 0 do
       DataSets[i].Close;
   finally
-    FLock.EndWrite;
+
+    EndWrite;
   end;
 end;
 
 constructor TFireDatabase.Create(ow: TComponent);
 begin
   inherited;
-  FLock := TMultiReadExclusiveWriteSynchronizer.Create;
   if not assigned(LDatabases) then
     exit;
-  // LDatabases.Lock;
+  LDatabases.add(self);
+{$IFNDEF DLL}
+  FLock := TMultiReadExclusiveWriteSynchronizer.Create;
+{$ENDIF}
   try
 {$IFDEF MSWINDOWS}
+{$IFDEF NOGUI}
+{$ELSE}
 {$IFDEF USACUSTOMDLG}
     OnLogin := DoLoginDialogEvent;
 {$ELSE}
+{$IFNDEF DLL}
     LoginDialog := LFireDacDataModule.FDGUIxLoginDialog1;
 {$ENDIF}
 {$ENDIF}
+{$ENDIF}
+{$ENDIF}
+{$IFNDEF DLL}
+    FSession := LSession;
+{$ENDIF}
     BeforeConnect := DoBeforeConnectEvent;
     AfterConnect := DoAfterConnectEvent;
-    LDatabases.add(self);
-    FSession := LSession;
-
     FormatOptions.InlineDataSize := 255;
-    FetchOptions.RowsetSize := firedac_rowSetSize;
+    FetchOptions.RowSetSize := firedac_rowSetSize;
     // menos de 50 repete muitas buscas... mais de 500 - fica pesado
     FetchOptions.Mode := fmOnDemand;
     FetchOptions.CursorKind := ckDynamic;
@@ -804,6 +943,30 @@ begin
 
   finally
   end;
+end;
+
+function TFireDatabase.CreatePoolManager: string;
+var
+  oList: TStringList;
+begin
+  if not assigned(FPoolManager) then
+  begin
+    oList := TStringList.Create;
+    try
+      oList.text := Params.text;
+      if not assigned(FPoolManager) then
+        FPoolManager := TFireManager.Create(nil);
+      FPoolManager.PoolDatabasename := Databasename + '_pool';
+      FPoolManager.Connection := self.Clone(FPoolManager.PoolDatabasename,
+        FPoolManager);
+      result := FPoolManager.PoolDatabasename;
+      FPoolManager.AddConnectionDef(result, DriverName, oList);
+      FPoolManager.Connection.ConnectionDefName := result;
+    finally
+      oList.free;
+    end;
+  end;
+  result := FPoolManager.PoolDatabasename;
 end;
 
 type
@@ -838,6 +1001,7 @@ begin
       begin
         // nao fazer nada
         FormatOptions.OwnMapRules := false;
+        FormatOptions.strsTrim := true;
       end;
     fdtFirebird:
       begin
@@ -854,6 +1018,7 @@ begin
         begin
           MaxStringSize := 255;
           OwnMapRules := true;
+          strsTrim := true;
           with MapRules.add do
           begin
             SourceDataType := dtBCD;
@@ -890,6 +1055,7 @@ begin
 {$ENDIF}
         MaxStringSize := 255;
         OwnMapRules := true;
+        strsTrim := true;
         with MapRules.add do
         begin
           ScaleMin := 2;
@@ -1046,65 +1212,79 @@ begin
   result := FireSession.FindDataBase(ADatabase);
   if not assigned(result) then
   begin
-    result := TFireDatabase.Create(nil);
+    result := TFireDatabase.Create(LFireDacDataModule);
     result.AliasName := AAlias;
     result.Databasename := ADatabase;
     result.ResourceOptions.SilentMode := true;
     if AUser <> '' then
-      result.Params.Values['USER_NAME'] := AUser;
+      result.UserName := AUser;
     if ASenha <> '' then
-      result.Params.Values['PASSWORD'] := ASenha;
+      result.Password := ASenha;
 
-    if result.Params.Values['PASSWORD'] <> '' then
+    if result.Password <> '' then
       result.LoginPrompt := false;
 
   end;
 end;
 
-procedure TFireDatabase.FillParams(ADb: TFireDatabase);
+procedure TFireDatabase.FillParams(ADB: TFireDatabase);
 begin
-  AliasName := ADb.AliasName;
-  Params.Assign(ADb.Params);
-  ResourceOptions.Assign(ADb.ResourceOptions);
-  FetchOptions.Assign(ADb.FetchOptions);
+  AliasName := ADB.AliasName;
+  Params.Assign(ADB.Params);
+  ResourceOptions.Assign(ADB.ResourceOptions);
+  FetchOptions.Assign(ADB.FetchOptions);
 end;
 
-{$IFDEF INTF_ON}
+{$IFNDEF BPL}
 
-
-
-class function TFireDatabase.NewQuery(ADatabaseName:string): IQuery;
+class function TFireDatabase.NewQuery(ADatabaseName: string): IQuery;
 var
   qry: TFireQuery;
   Intf: TQueryIntf<TFDQuery>;
 begin
-  qry := TFireQuery.Create(nil);
+  qry := TFireQuery.Create(LFireDacDataModule);
   qry.Databasename := ADatabaseName;
   Intf := TQueryIntf<TFDQuery>.Create(qry);
   Intf.FreeOnDestroy := true;
   result := Intf as IQuery;
 end;
 
-{ class function TFireDatabase.FindDataBase(ADatabasename: string): IDatabase;
-  begin
-  result := FireSession.FindDataBase(ADatabasename) as IDatabase;
-  end;
-}
-
 {$ENDIF}
 
-{ procedure TFireDatabase.Lock;
+class procedure TFireDatabase.Release;
+begin
+  if assigned(FPoolManager) then
   begin
-  FLock.BeginRead;
+    FPoolManager.free;
+    FPoolManager := nil;
   end;
-}
+end;
+
+var
+  LLastDatabase: TFireDatabase;
+
 destructor TFireDatabase.Destroy;
 begin
+  LLastDatabase := nil;
+  CloseDataSets;
   if assigned(LDatabases) then
   begin
     LDatabases.Remove(self);
   end;
-  FreeAndNil(FLock);
+
+{$IFDEF MSWINDOWS}
+{$IFDEF USACUSTOMDLG}
+  OnLogin := nil;
+{$ELSE}
+  LoginDialog := nil;
+{$ENDIF}
+{$ENDIF}
+  BeforeConnect := nil;
+  AfterConnect := nil;
+{$IFNDEF DLL}
+  FSession := nil;
+  freeAndNil(FLock);
+{$ENDIF}
   inherited;
 end;
 
@@ -1115,6 +1295,7 @@ end;
 
 procedure TFireDatabase.DoAfterConnectEvent(sender: TObject);
 begin
+
 {$IFNDEF EXTERNAL}
   FStopwatch.Stop;
   if FireDebugAttrib.active and FireDebugAttrib.execute then
@@ -1140,7 +1321,7 @@ begin
     RootKey := HKEY_LOCAL_MACHINE;
     OpenKey('\SOFTWARE\Microsoft\Windows\CurrentVersion', true);
     result := ReadString('ProgramFilesDir');
-    Free;
+    free;
   end;
 end;
 {$ENDIF}
@@ -1148,6 +1329,7 @@ end;
 procedure SetFireDacConfig(arq: string);
 begin
   LArqConfigINI := arq;
+  LoadConnectionsConfig;
 end;
 
 function GetConfigIni: string;
@@ -1174,17 +1356,31 @@ end;
 procedure TFireDatabase.DoConnect;
 var
   oDef: IFDStanConnectionDef;
+  oldLoginPrompt: boolean;
 begin
-  FLock.BeginWrite;
+  oldLoginPrompt := LoginPrompt;
   try
-  if Params.Values['DriverID'] = '' then
-    raise exception.Create('Falta definir o protocolo em ' + LArqConfigINI +
-      ' para a conexão: ' + Databasename + ' Alias: ' + AliasName);
-  if (Params.Values['DriverID'] = 'SQLITE') and (FDriveType = '') then
-    FDriveType := 'SQLITE';
-  inherited;
+    BeginWrite;
+    try
+      if Params.Values['DriverID'] = '' then
+        Params.Values['DriverID'] := DriverName;
+
+      if Params.Values['DriverID'] = '' then
+        raise exception.Create('Falta definir o protocolo em ' + LArqConfigINI +
+          ' para a conexão: ' + Databasename + ' Alias: ' + AliasName);
+      if (Params.Values['DriverID'] = 'SQLITE') and (FDriverType = '') then
+        FDriverType := 'SQLITE';
+
+      if (Params.Values['DriverID'] <> '') and (UserName <> '') and
+        (Password <> '') then
+        LoginPrompt := false;
+
+      inherited;
+    finally
+      EndWrite;
+    end;
   finally
-    FLock.EndWrite;
+    LoginPrompt := oldLoginPrompt;
   end;
 end;
 
@@ -1205,28 +1401,67 @@ begin
   try
     dlg.Connection := AConnection;
     dlg.Caption := 'Login: ' + Databasename;
-    dlg.User_Name.Text := AConnection.Params.Values['USER_NAME'];
+    dlg.User_Name.text := AConnection.Params.Values['USER_NAME'];
     dlg.ShowModal;
     if dlg.Canceled = false then
     begin
 {$IFDEF VER280}
-      AConnectionDef.Params.UserName := dlg.User_Name.Text;
-      AConnectionDef.Params.Password := dlg.Password.Text;
+      AConnectionDef.Params.UserName := dlg.User_Name.text;
+      AConnectionDef.Params.Password := dlg.Password.text;
 {$ELSE}
-      AConnectionDef.UserName := dlg.User_Name.Text;
-      AConnectionDef.Password := dlg.Password.Text;
+      AConnectionDef.UserName := dlg.User_Name.text;
+      AConnectionDef.Password := dlg.Password.text;
 {$ENDIF}
     end;
   finally
-    dlg.Free;
+    dlg.free;
   end;
 end;
 
 {$ENDIF}
 
+procedure TFireDatabase.EndRead;
+begin
+{$IFNDEF DLL}
+  FLock.EndRead;
+{$ENDIF}
+end;
+
+procedure TFireDatabase.EndWrite;
+begin
+{$IFNDEF DLL}
+  FLock.EndWrite;
+{$ENDIF}
+end;
+
 procedure TFireDatabase.GetColumnNames(ATable, aTmp: string; ALst: TStrings);
 begin
   GetFieldNames('', '', ATable, '', ALst);
+end;
+
+function TFireDatabase.GetFireConnectionString: string;
+var
+  str: TStringList;
+  i: integer;
+begin
+  str := TStringList.Create;
+  try
+    str.Assign(Params);
+    str.Delimiter := ';';
+    str.Values['Databasename'] := Databasename;
+    str.Values['AliasName'] := AliasName;
+    i := str.IndexOfName('MonitorBy');
+    if i >= 0 then
+      str.Delete(i);
+    result := str.DelimitedText;
+  finally
+    str.free;
+  end;
+end;
+
+procedure TFireDatabase.GetIndexes(ATableName: string; AListFields: TStrings);
+begin
+  self.GetIndexNames('', '', ATableName, '', AListFields);
 end;
 
 function TFireDatabase.GetDatabasename: string;
@@ -1237,6 +1472,17 @@ end;
 procedure TFireDatabase.GetFieldNames(tabela: string; lst: TStrings);
 begin
   GetColumnNames(tabela, '', lst);
+end;
+
+function TFireDatabase.GetPassword: string;
+begin
+  result := Params.Values['PASSWORD'];
+end;
+
+procedure TFireDatabase.GetPrimaryKeyFields(ATableName: String;
+  AListFields: TStrings);
+begin
+  self.GetKeyFieldNames('', '', ATableName, '', AListFields);
 end;
 
 procedure TFireDatabase.GetStoredProcNames(lst: TStrings; APattern: string);
@@ -1264,6 +1510,11 @@ begin
   result := ResourceOptions.CmdExecTimeout;
 end;
 
+function TFireDatabase.GetUserName: string;
+begin
+  result := Params.Values['USER_NAME'];
+end;
+
 {$IFDEF MSWINDOWS}
 
 function GetComputerName: String;
@@ -1279,7 +1530,7 @@ begin
         false);
       result := ReadString('ComputerName');
     finally
-      Free;
+      free;
     end;
 
   { Quando a função acima não retornar o nome do computador, e executada nova
@@ -1295,13 +1546,14 @@ begin
 end;
 {$ENDIF}
 
-procedure FillLocalSQLConnectionParams(ADb: TFireDatabase);
+procedure FillLocalSQLConnectionParams(ADB: TFireDatabase);
 begin
-  ADb.DriverName := 'SQLite';
-  ADb.Params.add('Database=:memory:');
-  ADb.ConnectionName := c_alias_Local_SQLite;
-  ADb.FDriveType := 'SQLITE';
-  ADb.LoginPrompt := false;
+  ADB.DriverName := 'SQLite';
+  ADB.Params.Values['Database'] := ':memory:';
+  ADB.Params.Values['DriverID'] := 'SQLite';
+  ADB.ConnectionName := c_alias_Local_SQLite;
+  ADB.FDriverType := 'SQLITE';
+  ADB.LoginPrompt := false;
 end;
 
 function Protocol2DriverID(AProtocol: string): string;
@@ -1323,10 +1575,89 @@ begin
     result := AProtocol;
 end;
 
+const
+  ReTablebase64 = #$40 + #$40 + #$40 + #$40 + #$40 + #$40 + #$40 + #$40 + #$40 +
+    #$40 + #$3E + #$40 + #$40 + #$40 + #$3F + #$34 + #$35 + #$36 + #$37 + #$38 +
+    #$39 + #$3A + #$3B + #$3C + #$3D + #$40 + #$40 + #$40 + #$40 + #$40 + #$40 +
+    #$40 + #$00 + #$01 + #$02 + #$03 + #$04 + #$05 + #$06 + #$07 + #$08 + #$09 +
+    #$0A + #$0B + #$0C + #$0D + #$0E + #$0F + #$10 + #$11 + #$12 + #$13 + #$14 +
+    #$15 + #$16 + #$17 + #$18 + #$19 + #$40 + #$40 + #$40 + #$40 + #$40 + #$40 +
+    #$1A + #$1B + #$1C + #$1D + #$1E + #$1F + #$20 + #$21 + #$22 + #$23 + #$24 +
+    #$25 + #$26 + #$27 + #$28 + #$29 + #$2A + #$2B + #$2C + #$2D + #$2E + #$2F +
+    #$30 + #$31 + #$32 + #$33 + #$40 + #$40 + #$40 + #$40 + #$40 + #$40;
+
+function Decode4to3Ex(const Value, Table: AnsiString): AnsiString;
+var
+  x, y, lv: integer;
+  d: integer;
+  dl: integer;
+  c: byte;
+  p: integer;
+begin
+  lv := Length(Value);
+  SetLength(result, lv);
+  x := 1;
+  dl := 4;
+  d := 0;
+  p := 1;
+  while x <= lv do
+  begin
+    y := Ord(Value[x]);
+    if y in [33 .. 127] then
+      c := Ord(Table[y - 32])
+    else
+      c := 64;
+    Inc(x);
+    if c > 63 then
+      continue;
+    d := (d shl 6) or c;
+    dec(dl);
+    if dl <> 0 then
+      continue;
+    result[p] := AnsiChar((d shr 16) and $FF);
+    Inc(p);
+    result[p] := AnsiChar((d shr 8) and $FF);
+    Inc(p);
+    result[p] := AnsiChar(d and $FF);
+    Inc(p);
+    d := 0;
+    dl := 4;
+  end;
+  case dl of
+    1:
+      begin
+        d := d shr 2;
+        result[p] := AnsiChar((d shr 8) and $FF);
+        Inc(p);
+        result[p] := AnsiChar(d and $FF);
+        Inc(p);
+      end;
+    2:
+      begin
+        d := d shr 4;
+        result[p] := AnsiChar(d and $FF);
+        Inc(p);
+      end;
+  end;
+  SetLength(result, p - 1);
+end;
+
+function DecodeBase64(const Value: AnsiString): AnsiString;
+begin
+  result := Decode4to3Ex(Value, ReTablebase64);
+end;
+
 var
   LConnectionsINI: TMemIniFile;
 
-procedure InitDataBaseParams(ADb: TFireDatabase; AinMemory: boolean = false);
+procedure LoadConnectionsConfig;
+begin
+  if assigned(LConnectionsINI) then
+    LConnectionsINI.free;
+  LConnectionsINI := TMemIniFile.Create(LArqConfigINI);
+end;
+
+procedure InitDataBaseParams(ADB: TFireDatabase; AinMemory: boolean = false);
 var
   LStr: TStringList;
   LOSAuthent, LProtocol, LPort, LHostname, LDatabase, LUsername, LPassword,
@@ -1369,7 +1700,7 @@ var
       if LCharacterSet <> '' then
         add('CharacterSet', LCharacterSet);
       // Compatibilidade com os campos Nome no banco WIN1252 - Calixto
-      ADb.FDriveType := 'INTRBASE';
+      ADB.FDriverType := 'INTRBASE';
     end
     else if SameText(ADriveName, 'Ora') then
     begin
@@ -1383,19 +1714,20 @@ var
       add('AuthMode', 'Normal');
       if LCharacterSet <> '' then
         add('CharacterSet', LCharacterSet); // UTF-8  ou  <NLS_LANG>
-      ADb.FDriveType := 'ORACLE';
+      ADB.FDriverType := 'ORACLE';
     end
     else if SameText(ADriveName, 'ODBC') then
     begin
       add('Datasource', LDatabase);
-      ADb.FDriveType := 'ODBC';
+      add('ODBCAdvanced', 'DSN=' + LDatabase);
+      ADB.FDriverType := 'ODBC';
     end
     else if SameText(ADriveName, 'MSSQL') then
     begin
       add('Server', LHostname);
       add('Database', LDatabase);
       add('RoleName', appRoleName);
-      ADb.FDriveType := 'MSSQL';
+      ADB.FDriverType := 'MSSQL';
     end
     else if SameText(ADriveName, 'SQLITE') then
     begin
@@ -1404,7 +1736,7 @@ var
       add('LockingMode', 'Normal');
       if LPort = '' then
         add('Port', LPort);
-      ADb.FDriveType := 'SQLITE';
+      ADB.FDriverType := 'SQLITE';
     end
     else if SameText(ADriveName, 'MySQL') then
     begin
@@ -1413,7 +1745,16 @@ var
       if LPort = '' then
         LPort := '3306';
       add('Port', LPort);
-      ADb.FDriveType := 'MYSQL';
+      ADB.FDriverType := 'MYSQL';
+      if LStr.Values['UseSSL'] <> '' then
+      begin
+        add('UseSSL', LStr.Values['UseSSL']);
+        add('SSL_ca', LStr.Values['SSL_ca']);
+        add('SSL_cert', LStr.Values['SSL_cert']);
+        add('SSL_key', LStr.Values['SSL_key']);
+        add('SSL_capath', LStr.Values['SSL_capath']);
+        add('SSL_cipher', LStr.Values['SSL_cipher']);
+      end;
     end;
 {$ENDIF}
     add('ApplicationName', ExtractFileName(ParamStr(0)));
@@ -1425,52 +1766,72 @@ var
     if LPassword <> '' then
       add('Password', LPassword);
 
+{$IFNDEF NOTRACE}
     if (AinMemory and (not SameText(ADriveName, 'SQLITE'))) or FireDebugAttrib.active
     then
       add('MonitorBy', 'Remote');
-
+{$IFEND}
   end;
 
+var
+  LAuth: string;
+  LUser: TArray<string>;
 begin
-  ADb.FLock.BeginWrite;
+  ADB.BeginWrite;
   try
-    if (SameText(ADb.AliasName, c_alias_Local_SQLite)) then
+    if (SameText(ADB.AliasName, c_alias_Local_SQLite)) and
+      assigned(LLocalConnection) then
     begin
-      FillLocalSQLConnectionParams(ADb);
+      FillLocalSQLConnectionParams(ADB);
       exit;
     end;
 
     if not fileExists(LArqConfigINI) then
+    begin
+      ForceDirectories(ExtractFilePath(LArqConfigINI));
+      with TIniFile.Create(LArqConfigINI) do
+        try
+          WriteString('SQLITE', 'Protocol', 'SQLITE');
+          WriteString('SQLITE', 'Database', ExtractFilePath(LArqConfigINI) +
+            'sqliteFiredac.sqlite3');
+        finally
+          free;
+        end;
       exit;
+    end;
 
     if not assigned(LConnectionsINI) then
-      LConnectionsINI := TMemIniFile.Create(LArqConfigINI);
+      LoadConnectionsConfig;
     System.TMonitor.Enter(LConnectionsINI);
     try
       LStr := TStringList.Create;
       try
 
-        LConnectionsINI.ReadSectionValues(ADb.AliasName, LStr);
+        LConnectionsINI.ReadSectionValues(ADB.AliasName, LStr);
         if (LStr.count = 0) then
           raise exception.Create('Não leu informações de configuração: ' +
-            LArqConfigINI + ' Alias: ' + ADb.AliasName);
+            LArqConfigINI + ' Alias: ' + ADB.AliasName);
 
-        if not LConnectionsINI.ValueExists(ADb.AliasName, 'AutoClose') then
+        if not LConnectionsINI.ValueExists(ADB.AliasName, 'AutoClose') then
         begin
-          LConnectionsINI.WriteBool(ADb.AliasName, 'AutoClose', true);
-          LConnectionsINI.WriteInteger(ADb.AliasName, 'RowSetSize', 250);
+          LConnectionsINI.WriteBool(ADB.AliasName, 'AutoClose', true);
+          LConnectionsINI.WriteInteger(ADB.AliasName, 'RowSetSize', 250);
         end;
 
-        LAutoClose := LConnectionsINI.ReadBool(ADb.AliasName,
+        LAutoClose := LConnectionsINI.ReadBool(ADB.AliasName,
           'AutoClose', true);
-        LRowsetsize := LConnectionsINI.ReadInteger(ADb.AliasName,
+        LRowsetsize := LConnectionsINI.ReadInteger(ADB.AliasName,
           'RowSetSize', 250);
         LProtocol := lowercase(LStr.Values['Protocol']);
         LPort := LStr.Values['Port'];
         LHostname := LStr.Values['Hostname'];
         LDatabase := LStr.Values['Database'];
-        LUsername := LStr.Values['User'];
-        LPassword := LStr.Values['Password'];
+        LAuth := DecodeBase64(LStr.Values['Auth']);
+        if LAuth = '' then
+          LAuth := '==';
+        LUser := LAuth.split(['='], 2);
+        LUsername := LUser[0]; // LStr.Values['User'];
+        LPassword := LUser[1]; // LStr.Values['Password'];
         LDialect := LStr.Values['Dialect'];
         LCharacterSet := LStr.Values['CharacterSet'];
         LVendorLib := LStr.Values['VendorLib'];
@@ -1482,18 +1843,18 @@ begin
         if LProtocol = '' then
           exit;
 
-        FireFillParams(Protocol2DriverID(LProtocol), ADb.Params);
+        FireFillParams(Protocol2DriverID(LProtocol), ADB.Params);
 
-        ADb.FetchOptions.AutoClose := LAutoClose;
+        ADB.FetchOptions.AutoClose := LAutoClose;
         if LRowsetsize <= 0 then
         begin
-          ADb.FetchOptions.Mode := fmAll;
+          ADB.FetchOptions.Mode := fmAll;
           // carrega todos os registros da tabela - indicado para ambientes instáveis
         end
         else
         begin
-          ADb.FetchOptions.RowsetSize := LRowsetsize;
-          ADb.FetchOptions.Mode := fmOnDemand;
+          ADB.FetchOptions.RowSetSize := LRowsetsize;
+          ADB.FetchOptions.Mode := fmOnDemand;
           // carrega somente o numero de registro necessário.  Indicado para tabelas grandes
         end;
 
@@ -1501,10 +1862,23 @@ begin
         System.TMonitor.exit(LConnectionsINI);
       end;
     finally
-      LStr.Free;
+      LStr.free;
     end;
   finally
-    ADb.FLock.EndWrite;
+    ADB.EndWrite;
+  end;
+end;
+
+class procedure TFireDatabase.InitParams(ADB: TFDConnection;
+  AAliasName: string);
+var
+  DB: TFireDatabase;
+begin
+  DB := FireSession.FindDataBase(AAliasName);
+  if assigned(DB) then
+  begin
+    ADB.Params.Assign(DB.Params);
+    ADB.LoginPrompt := DB.LoginPrompt;
   end;
 end;
 
@@ -1524,10 +1898,42 @@ begin
     repeat
       s := Value + intToStr(i);
       DB := FireSession.FindDataBase(s);
-      inc(i);
+      Inc(i);
     until DB = nil;
     Databasename := s;
   end;
+{$IFNDEF BPL}
+  if assigned(Params) then
+    if not(csDesigning in ComponentState) then
+      try
+        Params.Values['ConnectionName'] := Value;
+        Params.Values['AliasName'] := Value;
+      Except
+      end;
+  CheckTrace;
+{$ENDIF}
+end;
+
+procedure TFireDatabase.SetFireConnectionString(const AConn: String);
+var
+  str: TStringList;
+  i: integer;
+begin
+  str := TStringList.Create;
+  try
+    str.Delimiter := ';';
+    str.DelimitedText := AConn;
+{$IFDEF NOTRACE}
+    i := str.IndexOfName('MonitorBy');
+    if i >= 0 then
+      str.Delete(i);
+{$ENDIF}
+    Params.CommaText := str.CommaText;
+    LoginPrompt := Params.Values['password'] = '';
+  finally
+    str.free;
+  end;
+  CheckTrace;
 end;
 
 procedure TFireDatabase.SetDatabasename(const Value: string);
@@ -1540,11 +1946,19 @@ begin
     if assigned(DB) and (DB <> self) then
       raise exception.Create('Já existe um database com o mesmo identificador <'
         + Value + '>');
-    if assigned(DB) then
-       FDriveType := params['DriverID'];
   end;
-  ConnectionName := Value;
 
+  if FDriverType = '' then
+    FDriverType := Params.Values['DriverID'];
+  ConnectionName := Value;
+{$IFNDEF BPL}
+  try
+    if assigned(Params) then
+      if not(csDesigning in ComponentState) then
+        Params.Values['Databasename'] := Value;
+  except
+  end;
+{$ENDIF}
 end;
 
 procedure TFireDatabase.SetKeepConnection(const Value: boolean);
@@ -1557,11 +1971,17 @@ begin
   FmanualConfig := Value;
 end;
 
-procedure TFireDatabase.SetSession(const Value: TFireSession);
+procedure TFireDatabase.SetPassword(const Value: string);
 begin
-  FSession := Value;
+  Params.Values['PASSWORD'] := Value;
 end;
 
+{
+  procedure TFireDatabase.SetSession(const Value: TFireSession);
+  begin
+  FSession := Value;
+  end;
+}
 procedure TFireDatabase.SetSessionName(const Value: String);
 begin
   FSessionName := Value;
@@ -1575,6 +1995,11 @@ end;
 procedure TFireDatabase.SetTransIsolation(const Value: TFireTransIsolation);
 begin
   FTransIsolation := Value;
+end;
+
+procedure TFireDatabase.SetUserName(const Value: string);
+begin
+  Params.Values['USER_NAME'] := Value;
 end;
 
 { procedure TFireDatabase.UnLock;
@@ -1833,7 +2258,7 @@ begin
   CmdExecMode := amNonBlocking;
 end;
 
-{$IFDEF INTF_ON}
+{$IFNDEF BPL}
 
 { function TFireQuery.ConnectName(ADatabasename: string): IQuery;
   begin
@@ -1846,13 +2271,23 @@ begin
   result := TQueryIntf<TFireQuery>.Create(self);
 end;
 
-class function TFireQuery.New(ADatabasename: string): IQuery;
+class function TFireQuery.New(FConn: TFDConnection): IQuery;
+var
+  cmp: TQueryIntf<TFireQuery>;
+begin
+  cmp := TQueryIntf<TFireQuery>.Create;
+  if assigned(FConn) then
+    cmp.GetQuery.Connection := FConn;
+  result := cmp;
+end;
+
+class function TFireQuery.New(ADatabaseName: string): IQuery;
 var
   conn: TFireDatabase;
   cmp: TQueryIntf<TFireQuery>;
 begin
   cmp := TQueryIntf<TFireQuery>.Create;
-  conn := FireSession.FindDataBase(ADatabasename);
+  conn := FireSession.FindDataBase(ADatabaseName);
   if assigned(conn) then
     cmp.GetQuery.Database := conn;
   result := cmp;
@@ -1862,6 +2297,8 @@ end;
 constructor TFireQuery.Create(owner: TComponent);
 begin
   inherited;
+  if assigned(owner) and owner.InheritsFrom(TFDConnection) then
+    Connection := TFDConnection(owner);
   FLock := TMultiReadExclusiveWriteSynchronizer.Create;
   FSQL := TStringList.Create;
   TStringList(FSQL).OnChange := SqlChanged;
@@ -1910,11 +2347,33 @@ begin
   end;
 end;
 
+procedure TFireQuery.DebugAfter;
+begin
+{$IFNDEF EXTERNAL}
+  if (FireDebugAttrib.execute and FireDebugAttrib.active) or
+    (FireDebugAttrib.Detalhed) then
+    DebugLog('RA:' + intToStr(RowsAffected) + ' RC:' + intToStr(RecordCount) +
+      ' Stm: ' + copy(SQL.text, 1, 20) + '...' + #13#10 +
+      '---------------------');
+{$ENDIF}
+end;
+
+procedure TFireQuery.DebugBefore(const AIdent:string);
+begin
+{$IFNDEF EXTERNAL}
+  if FireDebugAttrib.Params_in or FireDebugAttrib.Detalhed then
+    DebugLogParams(self);
+  if (FireDebugAttrib.execute and FireDebugAttrib.active) or
+    (FireDebugAttrib.Detalhed) then
+    DebugLog(AIdent+'->'+Databasename + ': ' + SQL.text);
+{$ENDIF}
+end;
+
 destructor TFireQuery.Destroy;
 begin
   LocalSQL := nil;
-  FreeAndNil(FSQL);
-  FreeAndNil(FLock);
+  freeAndNil(FSQL);
+  freeAndNil(FLock);
   inherited;
 end;
 
@@ -1922,22 +2381,16 @@ procedure TFireQuery.ExecAsyncSql(AExecDirect: boolean);
 begin
   FRowsAffectedLocal := -1;
   ResourceOptions.CmdExecMode := amAsync;
-{$IFNDEF EXTERNAL}
-  if FireDebugAttrib.execute and FireDebugAttrib.active then
-    DebugLog(Databasename + ': ' + SQL.Text);
-  if FireDebugAttrib.Params_in and FireDebugAttrib.active then
-    DebugLogParams(self);
-{$ENDIF}
 {$IF CompilerVersion>=29.0}
   inherited ExecSql(AExecDirect);
 {$ELSE}
   ExecSql;
 {$ENDIF}
+
 end;
 
 procedure TFireQuery.ExecDirect;
 begin
-  FRowsAffectedLocal := -1;
 {$IF CompilerVersion>=29.0}
   FRowsAffectedLocal := inherited ExecSql(true);
 {$ELSE}
@@ -1948,38 +2401,30 @@ end;
 procedure TFireQuery.ExecSql;
 begin
   FRowsAffectedLocal := -1;
-{$IFNDEF EXTERNAL}
-  if FireDebugAttrib.Params_in then
-    DebugLogParams(self);
-  if FireDebugAttrib.execute and FireDebugAttrib.active then
-    DebugLog(Databasename + ': ' + SQL.Text);
-{$ENDIF}
+  DebugBefore('ExecSql');
   FRowsAffectedLocal := inherited ExecSql(false);
-{$IFNDEF EXTERNAL}
-  if FireDebugAttrib.execute and FireDebugAttrib.active then
-    DebugLog('RA:' + intToStr(RowsAffected) + ' RC:' + intToStr(RecordCount) +
-      ' Stm: ' + copy(SQL.Text, 1, 20) + '...' + #13#10 +
-      '---------------------');
-{$ENDIF}
+  DebugAfter;
 end;
 
 procedure TFireQuery.execute(ATimes, AOffset: integer);
 begin
   FRowsAffectedLocal := -1;
+  DebugBefore('Execute');
   inherited;
+  DebugAfter;
 end;
 
-procedure TFireQuery.FreeBookMark(book: TBookMark);
+procedure TFireQuery.FreeBookmark(book: TBookMark);
 begin
   if not UniDirectional then
-    inherited FreeBookMark(book);
+    inherited FreeBookmark(book);
 end;
 
-function TFireQuery.GetBookMark: TBookMark;
+function TFireQuery.GetBookmark: TBookMark;
 begin
   result := nil;
   if not UniDirectional then
-    result := inherited GetBookMark;
+    result := inherited GetBookmark;
 end;
 
 function TFireQuery.GetChacedUpdates: boolean;
@@ -2011,6 +2456,14 @@ function TFireQuery.GetRequestLive: boolean;
 begin
   result := UpdateOptions.RequestLive;
 end;
+
+{$IFNDEF BPL}
+
+function TFireQuery.GetRowSetSize: integer;
+begin
+  result := FetchOptions.RowSetSize;
+end;
+{$ENDIF}
 
 function TFireQuery.GetSQL: TStrings;
 begin
@@ -2079,25 +2532,84 @@ begin
 {$ENDIF}
 end;
 
+function FireTable_GetErrorMessage(E: EFDDBEngineException): string;
+var
+  i: integer;
+begin
+  result := '';
+  case E.Kind of
+    ekNoDataFound:
+      result := 'Dados não encontrado. Uma solicitação para uma quantidade específica de dados foi solicitado, mas não foi encontrado.';
+    ekTooManyRows:
+      result := 'Há multiplas linhas para a operação, sendo o esperado uma única linha, rever o comando.';
+    ekRecordLocked:
+      result := 'Registro em uso bloqueado por outra conexão, tente novamente.';
+    ekUKViolated:
+      result := 'Já existe uma registro com a mesma chave única na tabela, tente outra combinação.';
+    ekFKViolated:
+      result := 'Tentativa de inserir um dado que não esta presente na tabela externa de relacionamento, tente um registro válido.';
+    ekObjNotExists:
+      result := 'Tentativa de operação com um objeto do banco de dados que não existe.';
+    ekUserPwdInvalid, ekUserPwdExpired, ekUserPwdWillExpire:
+      result := 'Login com usuário não autorizado.';
+    ekCmdAborted:
+      result := 'Comando encerrado inesperadamente, tente novamente ou chame o administrador.';
+    ekServerGone:
+      result := 'Servidor desconectado, não é possível executar a operação.';
+    ekServerOutput:
+      result := E.Message;
+    ekArrExecMalfunc:
+      result := E.Message;
+    ekInvalidParams:
+      result := 'Parametros inválidos, tente nova combinação de parametros.';
+    ekOther:
+      result := 'Erro genérico. ' + E.Message;
+  else
+    result := E.Message;
+  end;
+
+  result := result + ' */ Objeto: ' + E.FDObjName;
+  // result := result + ' ErrorCode: ' + E.ErrorCode.ToString;
+  if E.SQL <> '' then
+    result := result + ' SQL: ' + E.SQL;
+  if E.Params.count > 0 then
+    result := result + ' Params: ' + E.Params.text;
+
+  for i := 0 to E.ErrorCount - 1 do
+    result := result + #13 + '(' + E.Errors[i].ObjName + ')' +
+      E.Errors[i].Message;
+
+  if E.StackTrace <> '' then
+    result := result + #13 + E.StackTrace;
+
+end;
+
 procedure TFireQuery.InternalOpen;
 begin
   try
     inherited;
   except
-    on E: exception do
+    on E: EFDDBEngineException do
     begin
-      E.Message := 'Name: ' + name + ' ErrorDesc: ' + E.Message + ' SQL: '
-        + SQL.Text;
-      raise exception.Create(E.Message);
-    end;
+      raise exception.Create(FireTable_GetErrorMessage(E));
+    end
+    else
+      raise;
   end;
 end;
 
 procedure TFireQuery.InternalPost;
 begin
-
-  inherited;
-
+  try
+    inherited;
+  except
+    on E: EFDDBEngineException do
+    begin
+      raise exception.Create(FireTable_GetErrorMessage(E));
+    end
+    else
+      raise;
+  end;
 end;
 
 procedure TFireQuery.Open(AAsync: boolean;
@@ -2111,6 +2623,15 @@ begin
   Open(ARowSetSize);
 end;
 
+procedure TFireQuery.ParamNullIF(sParam: string; Value: variant);
+var
+  prm: TFDParam;
+begin
+  prm := FindParam(sParam);
+  if (prm <> nil) and (prm.IsNull) then
+    prm.Value := Value;
+end;
+
 { function TFireQuery.IOpen: IQuery;
   begin
   result  := inherited Open;
@@ -2122,7 +2643,7 @@ begin
   FRowsAffectedLocal := -1;
   if ARowSetSize < 0 then
     ARowSetSize := firedac_rowSetSize;
-  FetchOptions.RowsetSize := ARowSetSize;
+  FetchOptions.RowSetSize := ARowSetSize;
   if ARowSetSize = 0 then
     FetchOptions.Mode := fmAll
   else
@@ -2154,7 +2675,7 @@ procedure TFireQuery.DoUpdateError(ASender: TDataSet; AException: EFDException;
   ARow: TFDDatSRow; ARequest: TFDUpdateRequest; var AAction: TFDErrorAction);
 begin
   FErrorMessage := AException.Message;
-  inc(FErrorCount);
+  Inc(FErrorCount);
   AAction := eaFail;
   if assigned(FOnUpdateError) then
     FOnUpdateError(ASender, AException, ARow, ARequest, AAction);
@@ -2169,7 +2690,7 @@ procedure TFireQuery.DoReconcileError(DataSet: TFDDataSet; E: EFDException;
 begin
   FRowsAffectedLocal := -1;
   FErrorMessage := FErrorMessage + #13 + E.Message;
-  inc(FErrorCount);
+  Inc(FErrorCount);
   Action := raAbort;
   if assigned(FOnReconcileError) then
     FOnReconcileError(DataSet, E, UpdateKind, Action);
@@ -2192,11 +2713,14 @@ begin
     FRowsAffectedLocal := -1;
     if SameText(Databasename, c_alias_Local_SQLite) then
       LocalSQL := nil
-    else if useLocalSql then
+    else // if useLocalSql then
     begin
-      if LLocalSQL.active = false then
-        LLocalSQL.active := true;
-      LocalSQL := LLocalSQL; // usado nos relatorios
+      if assigned(LLocalSQL) then
+      begin
+        if LLocalSQL.active = false then
+          LLocalSQL.active := true;
+        LocalSQL := LLocalSQL; // usado nos relatorios
+      end;
     end;
 
     if (FDatabasename = '') and (not assigned(Connection)) then
@@ -2210,12 +2734,12 @@ begin
   begin
     if FireDebugAttrib.active then
     begin
-      if FireDebugAttrib.Params_in then
+      if FireDebugAttrib.Params_in or FireDebugAttrib.Detalhed then
       begin
         DebugLogParams(self);
-        if assigned(Connection) then
-          DebugLog('Driver ID: ' + Connection.DriverName);
-        DebugLog('Alias: ' + Databasename + ' SQL: ' + SQL.Text);
+        //if assigned(Connection) then
+        //  DebugLog('Driver ID: ' + Connection.DriverName);
+        DebugLog('Alias: ' + Databasename + ' SQL: ' + SQL.text);
       end;
       LWatchr := TStopwatch.StartNew;
     end;
@@ -2233,12 +2757,12 @@ begin
       LWatchr.Stop;
       if FireDebugAttrib.Data_out then
         DebugLogFields(self);
-      if FireDebugAttrib.execute then
+      if FireDebugAttrib.execute  then
       begin
         DebugLog('Tempo(2): ' + FormatFloat('0.000', LWatchr.ElapsedMilliseconds
           / 1000) + ' Hr: ' + TimeToStr(now) + ' RA:' + intToStr(RowsAffected)
           { + ' RC:' + IntToStr(RecordCount) }
-          + ' Stm: ' + copy(SQL.Text, 1, 20) + '...' + #13#10 +
+          + ' Stm: ' + copy(SQL.text, 1, 20) + '...' + #13#10 +
           '---------------------');
       end;
     end;
@@ -2283,7 +2807,8 @@ begin
         ss := FireSession;
       Database := ss.FindDataBase(Value);
 
-      if assigned(Database) and (Database.FDriveType = '') then
+      if assigned(Database) and (not Database.manualConfig) and
+        (Database.FDriverType = '') then
         InitDataBaseParams(Database);
       ConnectionName := Value;
 {$IFDEF LOCALSQL}
@@ -2343,6 +2868,14 @@ begin
 
 end;
 
+{$IFNDEF BPL}
+
+procedure TFireQuery.SetRowSetSize(const Value: integer);
+begin
+  FetchOptions.RowSetSize := Value;
+end;
+{$ENDIF}
+
 procedure TFireQuery.SetSessionName(const Value: String);
 begin
   FSessionName := Value;
@@ -2390,31 +2923,30 @@ begin
   try
     FInSqlChanging := true;
     // troca o modelo de filtro para o modelo de macros permitidos no Firedac
-    s := TStringList(sender).Text;
+    s := TStringList(sender).text;
     if MacroCheck then
     begin
       repeat
         i := pos('{', s);
         if i > 0 then
         begin // é um filtro
-          r := copy(s, i, length(s));
+          r := copy(s, i, Length(s));
           f := pos('}', r);
           if f > 0 then
           begin // finalizou o filtro
             r := copy(r, 1, f); // troca o filtro para macro do firedac
-            s := StringReplace(s, r, '!' + copy(r, 2, length(r) - 2), []);
+            s := StringReplace(s, r, '!' + copy(r, 2, Length(r) - 2), []);
           end
           else
             i := 0;
         end;
       until i = 0;
     end;
-    inherited SQL.Text := s;
+    inherited SQL.text := s;
   finally
     FInSqlChanging := false;
   end;
 {$ENDIF}
-  // atribui ao componente o sql convertido para macros.
 end;
 
 { TFireSessions }
@@ -2429,16 +2961,11 @@ begin
   inherited;
   FLock := TMultiReadExclusiveWriteSynchronizer.Create;
   FAliases := TStringList.Create;
-{$IFDEF MSWINDOWS}
-  TFDPhysFBDriverLink.Create(self);
-{$ENDIF}
-  TFDGUIxWaitCursor.Create(self);
-  TFireTablesGuiXDialogs.Create(self);
 end;
 
 procedure TFireSessions.LoadConfig;
 var
-  ini: TIniFIle;
+  ini: TIniFile;
   oDef: IFDStanConnectionDef;
   i: integer;
   prm: TStringList;
@@ -2447,29 +2974,22 @@ begin
   try
     GetConfigIni;
 
-{$IFDEF MSWINDOWS}
-    { FDManager.Close;
-      FDManager.ConnectionDefFileAutoLoad := false;
-      if FDManager.ConnectionDefFileName <> LArqConfigINI + '_def' then
-      FDManager.ConnectionDefFileName := LArqConfigINI + '_def';
-    }
-{$ENDIF}
     FAliases.Clear;
 
     if not fileExists(LArqConfigINI) then
     begin
-      ShowMessage('Não encontrei o arquivo de configuração: ' + LArqConfigINI);
+      ForceDirectories(ExtractFilePath(LArqConfigINI));
+      // raise exception.Create('Não encontrei o arquivo de configuração: ' +
+      // LArqConfigINI);
     end;
 
-    ini := TIniFIle.Create(LArqConfigINI);
+    ini := TIniFile.Create(LArqConfigINI);
     prm := TStringList.Create;
     try
       ini.ReadSections(FAliases);
-      { .$IFDEF LOCALSQL }
 
       for i := 0 to FAliases.count - 1 do
       begin
-        // prm.Values['ConnectionDef'] := FAliases[i];
         prm.Values['Name'] := FAliases[i];
         prm.Values['DriverID'] :=
           Protocol2DriverID(ini.ReadString(FAliases[i], 'Protocol', ''));
@@ -2478,25 +2998,13 @@ begin
         prm.Values['OSAuthent'] := ini.ReadString(FAliases[i],
           'OSAuthent', 'no');
         prm.Values['Pooled'] := 'False';
-{$IFDEF MULTI_THREADED}
-        // prm.Values['Pooled'] := 'True';   // nao funcionou;
-{$ELSE}
-{$ENDIF}
-{$IFDEF MSWINDOWS}
-        // FDManager.AddConnectionDef(FAliases[i], prm.Values['DriverID'], prm, true);
-{$ENDIF}
       end;
-      FAliases.add(c_alias_Local_SQLite);
 
-      { .$ENDIF }
     finally
-      prm.Free;
-      ini.Free;
+      prm.free;
+      ini.free;
     end;
 
-{$IFDEF MSWINDOWS}
-    // FDManager.Open;
-{$ENDIF}
   finally
     FLock.EndWrite;
   end;
@@ -2504,8 +3012,8 @@ end;
 
 destructor TFireSessions.Destroy;
 begin
-  FAliases.Free;
-  FLock.Free;
+  FAliases.free;
+  FLock.free;
   inherited;
 end;
 
@@ -2629,14 +3137,14 @@ end;
 procedure TFireSession.CloseDatabase(lDb: TFireDatabase);
 begin
   { .$IFDEF LOCALSQL }
-  lDb.FLock.BeginWrite;
+  lDb.BeginWrite;
   try
     if not SameText(lDb.Databasename, c_alias_Local_SQLite) then { .$ENDIF }
       lDb.Offline;
     if LOnFinalization then
       lDb.Close;
   finally
-    lDb.FLock.EndWrite;
+    lDb.EndWrite;
   end;
 end;
 
@@ -2671,8 +3179,16 @@ end;
 
 function TFireSession.DatabaseCount: integer;
 begin
-  result := 0;
   result := LDatabases.count;
+end;
+
+procedure TFireSession.DeleteDatabasename(ADB: string);
+var
+  lDb: TFireDatabase;
+begin
+  lDb := FindDataBase(ADB);
+  if assigned(lDb) then
+    LDatabases.Remove(lDb);
 end;
 
 procedure TFireSession.DeleteAlias(sAlias: string);
@@ -2687,8 +3203,8 @@ end;
 
 destructor TFireSession.Destroy;
 begin
-  FConfigFile.Free;
-  FreeAndNil(FLock);
+  freeAndNil(FConfigFile);
+  freeAndNil(FLock);
   inherited;
 end;
 
@@ -2700,7 +3216,7 @@ end;
 
 function TFireSession.GetAliasDriverName(sAlias: String): String;
 var
-  ini: TIniFIle;
+  ini: TIniFile;
   DB: TFireDatabase;
   Prot: String;
 begin
@@ -2710,11 +3226,11 @@ begin
   try
     if assigned(DB) then
     begin
-      DB.FLock.BeginRead;
+      DB.BeginRead;
       try
-        Prot := DB.FDriveType;
+        Prot := DB.FDriverType;
       finally
-        DB.FLock.EndRead;
+        DB.EndRead;
       end;
       if SameText('FB', Prot) then
         result := 'INTRBASE'
@@ -2778,8 +3294,8 @@ begin
             s := s + '=' + FConfigFile.ReadString(sAlias, s, '');
             str[i] := s;
           end;
-          str.add('SERVER NAME=' + str.Values['Server'] + ':' + str.Values
-            ['Database']);
+          str.Values['SERVER NAME'] := str.Values['Server'] + ':' +
+            str.Values['Database'];
         finally
         end;
     end
@@ -2848,6 +3364,12 @@ begin
   result := LSessions.IsAlias(sAlias);
 end;
 
+function TFireSession.LockList: TDatabaseObjectList;
+begin
+  result := LDatabases.Lock;
+
+end;
+
 { procedure TFireSession.Lock;
   begin
   FLock.Acquire;
@@ -2866,6 +3388,61 @@ begin
   end;
 end;
 
+var
+  LConnectionID: integer = 0;
+
+class function TFireSession.NewDatabase(const AConnectionString: string)
+  : TFireDatabase;
+var
+  prms: TStringList;
+  alias: string;
+  dBase: string;
+  user: string;
+  pass: string;
+  driver: string;
+{$IFDEF NOTRACE}
+  i: integer;
+{$ENDIF}
+begin
+  result := nil;
+  prms := TStringList.Create;
+  try
+    prms.Delimiter := ';';
+    prms.DelimitedText := AConnectionString;
+
+    alias := prms.Values['Aliasname'];
+    if alias = '' then
+      alias := prms.Values['ConnectionName'];
+
+    dBase := prms.Values['Databasename'];
+    if dBase = '' then
+    begin
+      Inc(LConnectionID);
+      dBase := alias + '_' + LConnectionID.ToString;
+    end;
+    user := prms.Values['User_Name'];
+    pass := prms.Values['password'];
+    driver := prms.Values['DriveID'];
+    result := FireSession.FindDataBase(dBase);
+    if not assigned(result) then
+    begin
+      result := TFireDatabase.New(alias, dBase, user, pass);
+      result.SetFireConnectionString(AConnectionString);
+      if driver <> '' then
+        result.DriverName := driver;
+
+{$IFDEF NOTRACE}
+      // result.Params.Values['RemoteBy']:='Xxx';
+      i := result.Params.IndexOfName('MonitorBy');
+      if i >= 0 then
+        result.Params.Delete(i);
+{$ENDIF}
+    end;
+  finally
+    prms.free;
+  end;
+end;
+
 procedure TFireSession.Open;
 begin
   if not active then
@@ -2874,17 +3451,16 @@ end;
 
 function TFireSession.OpenDatabase(dBase: string): TFireDatabase;
 var
-  i: integer;
   DB: TFireDatabase;
 begin
   DB := FindDataBase(dBase);
-  DB.FLock.BeginWrite;
+  DB.BeginWrite;
   try
     if not DB.Connected then
       DB.Connected := true;
     result := DB;
   finally
-    DB.FLock.EndWrite;
+    DB.EndWrite;
   end;
 end;
 
@@ -2904,16 +3480,7 @@ begin
 end;
 
 procedure TFireSession.SetDatabases(i: integer; const Value: TFireDatabase);
-var
-  DB: TFireDatabase;
 begin
-  { db := LDatabases.Items[i];
-    if db<>Value then
-    begin
-    // talves possa Free..
-    end else
-    // LDatabases.Items[i] := Value;
-  }
 end;
 
 procedure TFireSession.SetnetFileDir(const Value: String);
@@ -2929,6 +3496,11 @@ end;
 procedure TFireSession.SetSessionName(const Value: String);
 begin
   FSessionName := Value;
+end;
+
+procedure TFireSession.UnlockList;
+begin
+  LDatabases.Release;
 end;
 
 { TFireStoredProc }
@@ -2958,7 +3530,7 @@ var
   LUpdateWatchr: TStopwatch;
 begin
 {$IFNDEF EXTERNAL}
-  if FireDebugAttrib.Params_in and FireDebugAttrib.active then
+  if (FireDebugAttrib.Params_in and FireDebugAttrib.active) or FireDebugAttrib.Detalhed then
     DebugLogParamsP;
   if FireDebugAttrib.active and FireDebugAttrib.execute then
   begin
@@ -2969,14 +3541,15 @@ begin
   try
     inherited ExecProc;
   except
-    on E: exception do
+    on E: EFDDBEngineException do
     begin
-      raise exception.Create('StoredProcName: ' + StoredProcName +
-        ' ErrorDesc: ' + E.Message);
-    end;
+      raise exception.Create(FireTable_GetErrorMessage(E));
+    end
+    else
+      raise;
   end;
 {$IFNDEF EXTERNAL}
-  if FireDebugAttrib.active then
+  if FireDebugAttrib.active or FireDebugAttrib.Detalhed then
   begin
     LUpdateWatchr.Stop;
     try
@@ -3025,10 +3598,10 @@ procedure TFireStoredProc.InternalOpen;
 var
   LUpdateWatchr: TStopwatch;
 begin
-  if FireDebugAttrib.Params_in and FireDebugAttrib.active then
+  if (FireDebugAttrib.Params_in and FireDebugAttrib.active) or FireDebugAttrib.Detalhed then
     DebugLogParamsP;
 {$IFNDEF EXTERNAL}
-  if FireDebugAttrib.active then
+  if FireDebugAttrib.active or FireDebugAttrib.Detalhed then
   begin
     DebugLog('Open StoredProc: ' + StoredProcName + ' Hr: ' + TimeToStr(now));
     LUpdateWatchr := TStopwatch.StartNew;
@@ -3037,14 +3610,15 @@ begin
   try
     inherited;
   except
-    on E: exception do
+    on E: EFDDBEngineException do
     begin
-      raise exception.Create('StoredProcName: ' + StoredProcName +
-        ' ErrorDesc: ' + E.Message);
-    end;
+      raise exception.Create(FireTable_GetErrorMessage(E));
+    end
+    else
+      raise;
   end;
 {$IFNDEF EXTERNAL}
-  if FireDebugAttrib.active then
+  if FireDebugAttrib.active or FireDebugAttrib.Detalhed then
   begin
     LUpdateWatchr.Stop;
     try
@@ -3093,6 +3667,7 @@ function FireGetDataBaseType(alias: String): integer;
 var
   sDriveName: string;
 begin
+  result := -1;
   sDriveName := FireSession.GetAliasDriverName(alias);
   if sDriveName = 'INTRBASE' then
     result := dbIntrBase
@@ -3105,14 +3680,13 @@ begin
 end;
 
 { TFireTable }
-function GetDefCampo(alias, campo, tipo: string; tam, Dec: integer;
+function GetDefCampo(alias, campo, tipo: string; tam, dec: integer;
   isDBF: boolean = false; notNull: boolean = false; valorBase: string = '';
   mx: integer = 0): string;
 var
   r, s: string;
-  sDriveName: string;
   databasetype: integer;
-  function iff(b: boolean; v: Variant; f: Variant): Variant;
+  function iff(b: boolean; v: variant; f: variant): variant;
   begin
     result := v;
     if not b then
@@ -3124,7 +3698,7 @@ begin
   if (tipo[1] = 'N') and (tam <= 0) then
   begin
     tam := 15;
-    Dec := 6;
+    dec := 6;
   end;
   s := campo + ' ';
   if isDBF then
@@ -3143,13 +3717,13 @@ begin
         begin
           tipo[1] := 'N';
           tam := 15;
-          Dec := 4;
+          dec := 4;
         end;
       'S', 'I', '+':
         begin
           tipo[1] := 'N';
           tam := 10;
-          Dec := 0;
+          dec := 0;
         end;
     end;
   case tipo[1] of
@@ -3223,7 +3797,7 @@ begin
         dbIntrBase:
           r := 'Float ';
       else
-        r := 'Numeric(' + intToStr(tam) + ',' + intToStr(Dec) + ') ';
+        r := 'Numeric(' + intToStr(tam) + ',' + intToStr(dec) + ') ';
       end;
     'L':
       r := 'Boolean';
@@ -3301,9 +3875,9 @@ begin
   lst := TStringList.Create;
   try
     conn.GetTableNames('', '', '', lst);
-    ShowMessage(lst.Text);
+    raise exception.Create(lst.text);
   finally
-    lst.Free;
+    lst.free;
   end;
 end;
 
@@ -3311,7 +3885,7 @@ procedure TFireTable.CreateTable;
 var
   s, ss, tipo, sTableName: string;
   i: integer;
-  tam, Dec: integer;
+  tam, dec: integer;
   conn: TFireDatabase;
   criaTmp: boolean;
 begin
@@ -3329,19 +3903,19 @@ begin
   begin
     tipo := 'C';
     tam := FieldDefs[i].Size;
-    Dec := FieldDefs[i].Precision;
+    dec := FieldDefs[i].Precision;
     case FieldDefs[i].DataType of
       ftBoolean:
         begin
           tipo := 'C';
           tam := 4;
-          Dec := 0;
+          dec := 0;
         end;
       ftInteger, ftSmallint, ftWord, ftLargeint:
         begin
           tipo := 'N';
           tam := 10;
-          Dec := 0;
+          dec := 0;
         end;
       ftFloat, ftBCD:
         tipo := 'N';
@@ -3349,7 +3923,7 @@ begin
         begin
           tipo := '$';
           tam := 18;
-          Dec := 4;
+          dec := 4;
         end;
       ftDate, ftDateTime, ftTime:
         begin
@@ -3361,7 +3935,7 @@ begin
 
     if ss <> '' then
       ss := ss + ', ';
-    ss := ss + GetDefCampo(Databasename, FieldDefs[i].Name, tipo, tam, Dec);
+    ss := ss + GetDefCampo(Databasename, FieldDefs[i].Name, tipo, tam, dec);
   end;
   s := s + ss + ' )';
 
@@ -3494,6 +4068,17 @@ end;
 { TFireBatchMove }
 {$IFDEF MSWINDOWS}
 
+constructor TFireBatchMove.Create(AOwner: TComponent);
+begin
+  inherited;
+{$IFDEF DELPHI25gt}
+  FDBatchMoveDataSetReader1 := TFDBatchMoveDataSetReader.Create(self);
+  FDBatchMoveDataSetWriter1 := TFDBatchMoveDataSetWriter.Create(self);
+  self.Reader := FDBatchMoveDataSetReader1;
+  self.Writer := FDBatchMoveDataSetWriter1;
+{$ENDIF}
+end;
+
 procedure TFireBatchMove.execute;
 begin
   RecordCount := inherited execute;
@@ -3501,17 +4086,29 @@ end;
 
 function TFireBatchMove.GetDestination: TFireTable;
 begin
+{$IFDEF DELPHI25gt}
+  result := TFireTable(FDBatchMoveDataSetWriter1.DataSet);
+{$ELSE}
   result := TFireTable(inherited Destination);
+{$ENDIF}
 end;
 
 function TFireBatchMove.GetSource: TDataSet;
 begin
+{$IFDEF DELPHI25gt}
+  result := FDBatchMoveDataSetReader1.DataSet;
+{$ELSE}
   result := inherited Source;
+{$ENDIF}
 end;
 
 procedure TFireBatchMove.SetDestination(const Value: TFireTable);
 begin
+{$IFDEF DELPHI25gt}
+  FDBatchMoveDataSetWriter1.DataSet := Value;
+{$ELSE}
   inherited Destination := Value;
+{$ENDIF}
 end;
 
 procedure TFireBatchMove.SetMode(const Value: TFireBatchMode);
@@ -3538,7 +4135,11 @@ end;
 
 procedure TFireBatchMove.SetSource(const Value: TDataSet);
 begin
+{$IFDEF DELPHI25gt}
+  FDBatchMoveDataSetReader1.DataSet := Value;
+{$ELSE}
   inherited Source := Value;
+{$ENDIF}
 end;
 
 procedure TFireBatchMove.SetTableType(const Value: TFireTableType);
@@ -3548,11 +4149,11 @@ end;
 {$ENDIF}
 { TDatabasesList }
 
-procedure TDatabasesList.add(ADb: TFireDatabase);
+procedure TDatabasesList.add(ADB: TFireDatabase);
 begin
   FLock.BeginWrite;
   try
-    FItems.add(ADb);
+    FItems.add(ADB);
   finally
     FLock.EndWrite;
   end;
@@ -3571,7 +4172,7 @@ end;
 constructor TDatabasesList.Create;
 begin
   inherited;
-  FItems := TList.Create;
+  FItems := TDatabaseObjectList.Create;
   FLock := TMultiReadExclusiveWriteSynchronizer.Create;
 end;
 
@@ -3586,9 +4187,16 @@ begin
 end;
 
 destructor TDatabasesList.Destroy;
+var
+  tmp: TObject;
 begin
-  FreeAndNil(FLock);
-  FreeAndNil(FItems);
+  while FItems.count > 0 do
+  begin
+    tmp := FItems.items[0];
+    freeAndNil(tmp);
+  end;
+  freeAndNil(FItems);
+  freeAndNil(FLock);
   inherited;
 end;
 
@@ -3596,44 +4204,59 @@ function TDatabasesList.FindDataBase(alias: String): TFireDatabase;
 var
   i: integer;
 begin
+  result := nil;
   FLock.BeginRead;
   try
+
+    if assigned(LLastDatabase) and (LLastDatabase.Databasename.equals(alias))
+    then
+    begin
+      result := LLastDatabase;
+      exit;
+    end;
+
     result := nil;
-    { .$IFDEF LOCALSQL }
-    if SameText(alias, c_alias_Local_SQLite) then
+    if alias = '' then
+      exit;
+    // raise exception.Create('Não informou o DB Alias para a conexão');
+    if SameText(alias, c_alias_Local_SQLite) and assigned(LLocalConnection) then
     begin
       result := LLocalConnection;
       exit;
     end;
-    { .$ENDIF }
     for i := 0 to count - 1 do
       if SameText(items[i].Databasename, alias) then
       begin
         result := items[i];
-        if result.Params.Values['DriverID'] = '' then
+        if result.DriverName = '' then
         begin
           InitDataBaseParams(result, false);
           result.init;
         end;
+        LLastDatabase := result;
         exit;
       end;
     if not assigned(result) then
       if FireSessions.FAliases.IndexOf(alias) >= 0 then
       begin
         // é um alias que não foi iniado como Databasename
-        result := TFireDatabase.Create(FireSession);
-        result.FLock.BeginWrite;
+        result := TFireDatabase.Create(LSessions);
+        result.BeginWrite;
         try
           result.AliasName := alias;
           result.ConnectionName := alias; // trick para quebrar loop;
 
 {$IFDEF MSWINDOWS}
           // InitDataBaseParams(result);  -- a chamada é feita ao atribuir o aliasname
+{$IFDEF NOGUI}
+{$ELSE}
           result.LoginDialog := LFireDacDataModule.FDGUIxLoginDialog1;
+{$ENDIF}
           result.LoginPrompt := true;
 {$ENDIF}
+          LLastDatabase := result;
         finally
-          result.FLock.EndWrite;
+          result.EndWrite;
         end;
       end;
 
@@ -3652,7 +4275,7 @@ begin
   end;
 end;
 
-function TDatabasesList.Lock: TList;
+function TDatabasesList.Lock: TDatabaseObjectList;
 begin
   FLock.BeginWrite;
   result := FItems;
@@ -3673,19 +4296,6 @@ begin
   end;
 end;
 
-{ procedure TDatabasesList.Lock;
-  begin
-  System.TMonitor.enter(FLock);
-  end;
-}
-
-{ procedure TDatabasesList.UnLock;
-  begin
-  System.TMonitor.exit(FLock);
-  end;
-}
-{ TFDParamHelper }
-
 procedure ExchangeFieldType(qry: TFireQuery; fld: string; ftClass: TFieldClass);
 var
   i: integer;
@@ -3702,7 +4312,7 @@ begin
         n := f.Name;
         tmp := ftClass.Create(qry);
         tmp.FieldName := f.FieldName;
-        f.Free;
+        f.free;
         tmp.DataSet := qry;
         exit;
       end;
@@ -3712,7 +4322,7 @@ begin
   end;
 end;
 
-{$IF DEFINED(MSWINDOWS) AND NOT DEFINED(DLL)}
+{$IFNDEF NOTRACE}
 {$IFNDEF EXTERNAL}
 {$IF CompilerVersion>= 29.0}
 
@@ -3728,7 +4338,7 @@ procedure TFireTFDMoniCustomClientLink.DoTraceMsgEvent
   (ASender: TFDMoniClientLinkBase; const AClassName, AObjName,
   AMessage: String);
 begin
-{$IFNDEF BPL}
+{$IFNDEF NOTRACE}
   DebugLog(AClassName + '/' + AObjName + ': ' + AMessage);
 {$ENDIF}
 end;
@@ -3748,11 +4358,25 @@ var
 constructor TFireDacDataModule.Create(ow: TComponent);
 begin
   inherited Create(ow);
+
 {$IFDEF MSWINDOWS}
-  FDPhysFBDriverLink1 := TFDPhysFBDriverLink.Create(self);
+{$IFDEF NOGUI}
+{$ELSE}
+  FDGUIxLoginDialog1 := TFDGUIxLoginDialog.Create(self);
+  FDGUIxErrorDialog1 := TFDGUIxErrorDialog.Create(self);
 {$ENDIF}
-  // FDGUIxWaitCursor1:= TFDGUIxWaitCursor.create(self);
-  // FDPhysSQLiteDriverLink1:= TFDPhysSQLiteDriverLink.create(self);
+  FDPhysFBDriverLink1 := TFDPhysFBDriverLink.Create(self);
+  FDGUIxWaitCursor1 := TFDGUIxWaitCursor.Create(self);
+  FDPhysSQLiteDriverLink1 := TFDPhysSQLiteDriverLink.Create(self);
+  FDPhysMySQLDriverLink1 := TFDPhysMySQLDriverLink.Create(self);
+  Script := TFDScript.Create(self);
+  FDPhysODBCDriverLink1 := TFDPhysODBCDriverLink.Create(self);
+  FDPhysOracleDriverLink1 := TFDPhysOracleDriverLink.Create(self);
+{$IFNDEF NOTRACE}
+  FDMonRemoteLink1 := TFDMoniRemoteClientLink.Create(self);
+  FDMonRemoteLink1.Tracing := false;
+{$ENDIF}
+{$ENDIF}
 end;
 
 {$IFDEF VCL}
@@ -3769,16 +4393,16 @@ begin
     if dlg.ModalResult = mrOk then
     begin
       AResult := true;
-{$IFDEF RTL280_UP}
-      FDGUIxLoginDialog1.ConnectionDef.Params.UserName := dlg.User_Name.Text;
-      FDGUIxLoginDialog1.ConnectionDef.Params.Password := dlg.Password.Text;
+{$IF CompilerVersion>=28}
+      FDGUIxLoginDialog1.ConnectionDef.Params.UserName := dlg.User_Name.text;
+      FDGUIxLoginDialog1.ConnectionDef.Params.Password := dlg.Password.text;
 {$ELSE}
-      FDGUIxLoginDialog1.ConnectionDef.UserName := dlg.User_Name.Text;
-      FDGUIxLoginDialog1.ConnectionDef.Password := dlg.Password.Text;
+      FDGUIxLoginDialog1.ConnectionDef.UserName := dlg.User_Name.text;
+      FDGUIxLoginDialog1.ConnectionDef.Password := dlg.Password.text;
 {$ENDIF}
     end;
   finally
-    dlg.Free;
+    dlg.free;
   end;
 end;
 {$ENDIF}
@@ -3790,6 +4414,11 @@ begin
 end;
 
 { TFireScript }
+
+procedure TFireScript.Clear;
+begin
+  SQLScripts.Clear;
+end;
 
 procedure TFireScript.ExecSql;
 begin
@@ -3840,17 +4469,22 @@ begin
     sErro := '';
     for i := 0 to SQLScripts.count - 1 do
       try
-        Connection.ExecSql(SQLScripts[i].SQL.Text);
+        Connection.ExecSql(SQLScripts[i].SQL.text);
       except
+        on E: EFDDBEngineException do
+        begin
+          sErro := FireTable_GetErrorMessage(E);
+          result := false;
+        end;
         on E: exception do
         begin
-          sErro := E.Message + #13#10;
+          sErro := E.Message;
           result := false;
         end;
       end;
-    if sErro <> '' then
-      raise exception.Create(sErro);
   end;
+  if sErro <> '' then
+    raise exception.Create(sErro);
 end;
 
 function TFireScripts.GetDatabase: TFireDatabase;
@@ -3918,90 +4552,134 @@ end;
 var
   ArqZConnections: string;
 
+destructor TFireDacDataModule.Destroy;
+begin
+{$IFDEF MSWINDOWS}
+  FDPhysFBDriverLink1.free;
+{$IFNDEF NOTRACE}
+  FDMonRemoteLink1.Tracing := false;
+  FDMonRemoteLink1.free;
+{$ENDIF}
+{$ENDIF}
+  inherited;
+end;
+
+{$IFDEF MSWINDOWS}
+
 function TFireDacDataModule.OraDriver: TFDPhysOracleDriverLink;
 begin
   if not assigned(FDPhysOracleDriverLink1) then
     FDPhysOracleDriverLink1 := TFDPhysOracleDriverLink.Create(self);
   result := FDPhysOracleDriverLink1;
 end;
+{$ENDIF}
 
 initialization
 
-FireDebugAttrib.active := false;
-FireDebugAttrib.execute := false;
-ShowTables(nil); // dummy;
+try
+  FireDebugAttrib.active := false;
+  FireDebugAttrib.execute := false;
+  ShowTables(nil); // dummy;
 {$IFDEF MSWINDOWS}
-if (fileExists(ExtractFilePath(ParamStr(0)) + 'debug.on')) or
-  FindCmdLineSwitch('D', ['-', '\', '/'], true) then
-begin
+  if (fileExists(ExtractFilePath(ParamStr(0)) + 'debug.on')) or
+    FindCmdLineSwitch('D', ['+', '-', '\', '/'], true) then
+
+  begin
+    FireDebugAttrib.Detalhed := FindCmdLineSwitch('+D', ['/', '\'], true);
 {$IFNDEF EXTERNAL}
-  DebugLog('Iniciando monitor do FireDac');
+    DebugLog('Iniciando monitor do FireDac');
 {$ENDIF}
-  FireDebugAttrib.active := true;
+    FireDebugAttrib.active := true;
 
 {$IFNDEF BPL}
-{$IF NOT DEFINED(DLL)}
+{$IFNDEF NOTRACE}
 {$IFNDEF EXTERNAL}
 {$IF CompilerVersion>= 29.0}
-  LTrace := TFireTFDMoniCustomClientLink.Create(LSessions);
-  with TIniFIle.Create(ExtractFilePath(ParamStr(0)) + 'debug.on') do
-    try
-      LTrace.Host := ReadString('Server', 'Host', 'localhost');
-      LTrace.Port := ReadInteger('Server', 'Port', 8050);
-      LTrace.Tracing := LTrace.Port > 0;
+    if FireDebugAttrib.active then
+    begin
+      LTrace := TFireTFDMoniCustomClientLink.Create(LSessions);
+      with TIniFile.Create(ExtractFilePath(ParamStr(0)) + 'debug.on') do
+        try
+          LTrace.Host := ReadString('Server', 'Host', 'localhost');
+          LTrace.Port := ReadInteger('Server', 'Port', 8050);
+          LTrace.Tracing := LTrace.Port > 0;
 
-      FireDebugAttrib.transaction := ReadBool('Database', 'Transaction', false);
-      FireDebugAttrib.execute := ReadBool('Database', 'Execute', false);
-      FireDebugAttrib.Params_in := ReadBool('Database', 'ParamsIN', false) or
-        ReadBool('Database', 'dbPARAMS', false);
-      FireDebugAttrib.Data_out := ReadBool('Database', 'ParamsOUT', false);
-      FireDebugAttrib.prepare := ReadBool('Database', 'Prepare', false);
-      FireDebugAttrib.unprepare := ReadBool('Database', 'Unprepare', false);
-      FireDebugAttrib.transaction := ReadBool('Database', 'Transaction', false);
+          FireDebugAttrib.transaction :=
+            ReadBool('Database', 'Transaction', false);
+          FireDebugAttrib.execute := ReadBool('Database', 'Execute', false);
+          FireDebugAttrib.Params_in := ReadBool('Database', 'ParamsIN', false)
+            or ReadBool('Database', 'dbPARAMS', false);
+          FireDebugAttrib.Data_out := ReadBool('Database', 'ParamsOUT', false);
+          FireDebugAttrib.prepare := ReadBool('Database', 'Prepare', false);
+          FireDebugAttrib.unprepare := ReadBool('Database', 'Unprepare', false);
+          FireDebugAttrib.transaction :=
+            ReadBool('Database', 'Transaction', false);
 
-      if FindCmdLineSwitch('-D', ['-', '\', '/'], true) then
-        FireDebugAttrib.Params_in := false;
+          if FindCmdLineSwitch('-D', ['-', '\', '/'], true) then
+            FireDebugAttrib.Params_in := false;
 
-      LTrace.EventKinds := [ekLiveCycle, ekError, ekAdaptUpdate, ekConnConnect,
-        ekCmdExecute];
-      if FireDebugAttrib.Params_in then
-        LTrace.EventKinds := LTrace.EventKinds + [ekCmdDataIn];
-      if FireDebugAttrib.Data_out then
-        LTrace.EventKinds := LTrace.EventKinds + [ekCmdDataOut];
-      if FireDebugAttrib.transaction then
-        LTrace.EventKinds := LTrace.EventKinds + [ekConnTransact, ekConnService,
-          ekCmdPrepare];
-      LTrace.Tracing := true;
-    finally
-      Free;
+          LTrace.EventKinds := [ekLiveCycle, ekError, ekAdaptUpdate,
+            ekConnConnect, ekCmdExecute];
+          if FireDebugAttrib.Params_in then
+            LTrace.EventKinds := LTrace.EventKinds + [ekCmdDataIn];
+          if FireDebugAttrib.Data_out then
+            LTrace.EventKinds := LTrace.EventKinds + [ekCmdDataOut];
+          if FireDebugAttrib.transaction then
+            LTrace.EventKinds := LTrace.EventKinds +
+              [ekConnTransact, ekConnService, ekCmdPrepare];
+          LTrace.Tracing := true;
+        finally
+          free;
+        end;
     end;
 {$IFEND}
 {$ENDIF}
 {$IFEND}
 {$ENDIF}
-end;
+  end;
 {$ENDIF}
-LSessions := TFireSessions.Create(nil);
-LFireDacDataModule := TFireDacDataModule.Create(LSessions);
-LDatabases := TDatabasesList.Create;
-LSession := TFireSession.Create(LSessions);
+  LSessions := TFireSessions.Create(nil);
+  LFireDacDataModule := TFireDacDataModule.Create(LSessions);
+  LDatabases := TDatabasesList.Create(LSessions);
+  LSession := TFireSession.Create(LSessions);
 
 {$IFDEF MSWINDOWS}
-FindCmdLineSwitch('Z=', ArqZConnections, true);
-if ArqZConnections <> '' then
-begin
-  if ExtractFilePath(ArqZConnections) = '' then
-    ArqZConnections := ExtractFilePath(LArqConfigINI) + ArqZConnections;
-  SetFireDacConfig(ArqZConnections);
-end;
-LSessions.LoadConfig;
+  FindCmdLineSwitch('Z=', ArqZConnections, true);
+  if ArqZConnections <> '' then
+  begin
+    if ExtractFilePath(ArqZConnections) = '' then
+      ArqZConnections := ExtractFilePath(LArqConfigINI) + ArqZConnections;
+    SetFireDacConfig(ArqZConnections);
+  end;
+  LSessions.LoadConfig;
 
-LLocalConnection := TFireDatabase.Create(LSessions);
-LLocalConnection.Temporary := true;
-FillLocalSQLConnectionParams(LLocalConnection);
-LLocalSQL := TFDLocalSQL.Create(LSessions);
-LLocalSQL.Connection := LLocalConnection;
+{$IFNDEF UNIGUI}
+  if FireSessions.FAliases.IndexOf(c_alias_Local_SQLite) < 0 then
+  begin
+    LLocalConnection := TFireDatabase.Create(LSessions);
+    LLocalConnection.Temporary := true;
+    FillLocalSQLConnectionParams(LLocalConnection);
+    // LLocalSQL := TFDLocalSQL.Create(LSessions);
+    // LLocalSQL.Connection := LLocalConnection;
+  end
+  else
+  begin
+    { LLocalConnection := TFireDatabase.Create(LSessions);
+      LLocalConnection.AliasName := c_alias_Local_SQLite;
+      LLocalSQL := TFDLocalSQL.Create(LSessions);
+      LLocalSQL.Connection := LLocalConnection;
+    }
+  end;
 {$ENDIF}
+{$ENDIF}
+except
+  on E: exception do
+{$IFDEF SERVICE}
+    DebugLog(E.Message);
+{$ELSE}
+    raise;
+{$ENDIF}
+end;
 
 finalization
 
@@ -4009,24 +4687,25 @@ LOnFinalization := true;
 
 {$IFDEF MSWINDOWS}
 {$ENDIF}
-FreeAndNil(LSession);
-LDatabases := nil;
-
 {$IFNDEF BPL}
-{$IF DEFINED(MSWINDOWS) AND NOT DEFINED(DLL)}
-{$IF CompilerVersion>= 29.0}
+{$IF DEFINED(TRACE)}
 {$IFNDEF EXTERNAL}
-FreeAndNil(LTrace);
+{$IF CompilerVersion>= 29.0}
+{$IFNDEF NOTRACE}
+if assigned(LTrace) then
+begin
+  LTrace.Tracing := false;
+  freeAndNil(LTrace);
+end;
+{$ENDIF}
 {$ENDIF}
 {$IFEND}
 {$ENDIF}
 {$ENDIF}
-FreeAndNil(LFireDacDataModule);
-
 LOnFinalizationED := true;
+freeAndNil(LConnectionsINI);
+freeAndNil(LSessions);
 
-FreeAndNil(LConnectionsINI);
-FreeAndNil(LSessions);
-FreeAndNil(LDatabases);
+TFireDatabase.Release;
 
 end.

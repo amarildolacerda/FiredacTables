@@ -95,3 +95,9 @@
   {$DEFINE FireDAC_IB_STATIC}            // Use IB driver static linking
   {$DEFINE FireDAC_IB_STATIC_IBBRAND}    // Use IbTogo static linking library
 {$ENDIF}
+
+
+{$IF CompilerVersion>=32.0}
+  {$DEFINE DELPHI25}
+  {$DEFINE DELPHI25gt}
+{$endif}
